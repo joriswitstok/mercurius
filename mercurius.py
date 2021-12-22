@@ -30,12 +30,6 @@ from matplotlib import pyplot as plt
 import seaborn as sns
 sns.set_style("ticks")
 
-# Load style file
-plt.style.use("aux/PaperDoubleFig.mplstyle")
-fontsize = plt.rcParams["font.size"]
-def_linewidth = plt.rcParams["lines.linewidth"]
-def_markersize = plt.rcParams["lines.markersize"]
-
 from aux.star_formation import SFR_L
 from aux.infrared_luminosity import T_CMB_obs, inv_CMB_heating, CMB_correction, Planck_func, calc_FIR_SED
 
@@ -264,9 +258,9 @@ class MN_FIR_SED_solver(Solver):
         return ll
 
 class FIR_SED_fit:
-    def __init__(self, l0_list, analysis, mcrfol, fd_conv=None, l_min=None, l_max=None,
+    def __init__(self, l0_list, analysis, mcrfol, fluxdens_unit="muJy", l_min=None, l_max=None,
                     fixed_T_dust=50.0, fixed_beta=None, cosmo=None,
-                    T_lolim=False, T_uplim=False, pformat=None, dpi=None, verbose=True):
+                    T_lolim=False, T_uplim=False, pformat=None, dpi=None, mpl_style=None, verbose=True):
         if verbose:
             print("\nInitialising FIR SED fitting object...")
         
@@ -274,10 +268,14 @@ class FIR_SED_fit:
         self.analysis = analysis
         self.mcrfol = mcrfol
 
-        if fd_conv is None:
+        if fluxdens_unit:
+            assert fluxdens_unit in ["Jy", "mJy", "muJy", "nJy"]
+            self.fluxdens_unit = fluxdens_unit
             # Setting this unit converter to 1 won't change any of the units, so flux density spectra are in Jy;
             # setting it to 1e3 will change the units of flux density spectra to mJy, 1e6 to μJy, etc.
-            self.fd_conv = 1e6
+            self.fd_conv = {"Jy": 1, "mJy": 1e3, "muJy": 1e6, "nJy": 1e9}[fluxdens_unit]
+        else:
+            self.fd_conv = 1
 
         if l_min is None:
             # Plot from rest-frame wavelength of 50 μm
@@ -317,6 +315,10 @@ class FIR_SED_fit:
             self.dpi = 150
         else:
             self.dpi = dpi
+        
+        if mpl_style is not None:
+            # Load style file
+            plt.style.use(mpl_style)
 
         self.verbose = verbose
         if self.verbose:
@@ -327,8 +329,9 @@ class FIR_SED_fit:
         self.fixed_beta = fixed_beta
         self.beta_str = "beta_{:.1f}".format(self.fixed_beta) if self.fixed_beta else "vary_beta"
 
-    def set_data(self, obj, z, obj_M, obj_M_lowerr, obj_M_uperr, SFR_UV, SFR_UV_err,
-                    lambda_emit_vals, lambda_emit_ranges, S_nu_vals, S_nu_errs, cont_uplims, cont_excludes=None, uplim_nsig=3.0,
+    def set_data(self, obj, z,
+                    lambda_emit_vals, S_nu_vals, S_nu_errs, cont_uplims, lambda_emit_ranges=None, cont_excludes=None, uplim_nsig=3.0,
+                    obj_M=np.nan, obj_M_lowerr=np.nan, obj_M_uperr=np.nan, SFR_UV=np.nan, SFR_UV_err=np.nan,
                     cont_area=None, cont_area_uplim=None, reference=None):
         if self.verbose:
             print("\nSetting photometric data points...")
@@ -358,7 +361,10 @@ class FIR_SED_fit:
                 print("Warning: invalid fluxes present ({:d}/{:d} data points), will be ignored...".format(np.sum(~valid_fluxes), len(valid_fluxes)))
         
         self.lambda_emit_vals = np.asarray(lambda_emit_vals)[valid_fluxes]
-        self.lambda_emit_ranges = np.asarray(lambda_emit_ranges)[valid_fluxes]
+        if lambda_emit_ranges is None:
+            self.lambda_emit_ranges = np.tile(np.nan, (np.sum(valid_fluxes), 2))
+        else:
+            self.lambda_emit_ranges = np.asarray(lambda_emit_ranges)[valid_fluxes]
         self.S_nu_vals = np.asarray(S_nu_vals)[valid_fluxes]
         self.S_nu_errs = np.asarray(S_nu_errs)[valid_fluxes]
         self.cont_uplims = np.asarray(cont_uplims)[valid_fluxes]
@@ -367,8 +373,8 @@ class FIR_SED_fit:
         self.uplim_nsig = uplim_nsig
         
         if self.verbose:
-            print('', "Wavelength (μm)\tFlux (μJy)\tError (μJy)\tUpper limit?\tExclude?",
-                    *["{:.5g}\t\t{:.5g}\t\t{}\t\t{}\t\t{}".format(wl, f*1e6, 'N/A' if u else "{:.5g}".format(e*1e6), u, exc) \
+            print('', "Wavelength (μm)\tFlux ({unit})\tError ({unit})\tUpper limit?\tExclude?".format(unit=self.fluxdens_unit.replace("mu", 'μ')),
+                    *["{:.5g}\t\t{:.5g}\t\t{}\t\t{}\t\t{}".format(wl, f*self.fd_conv, 'N/A' if u else "{:.5g}".format(e*self.fd_conv), u, exc) \
                         for wl, f, e, u, exc in zip (self.lambda_emit_vals, self.S_nu_vals, self.S_nu_errs, self.cont_uplims, self.cont_excludes)], sep='\n')
         
         self.valid_cont_area = cont_area is not None and np.isfinite(cont_area)
@@ -1316,10 +1322,10 @@ class FIR_SED_fit:
                                                             self.cont_uplims, self.cont_excludes):
             self.ax.errorbar(l, s_nu*self.fd_conv, xerr=lrange.reshape(2, 1),
                                 yerr=(s_nu-s_nu/self.uplim_nsig)*self.fd_conv if uplim else s_nuerr*self.fd_conv, uplims=uplim,
-                                marker='o', markersize=def_markersize, linestyle="None", color='k', alpha=0.4 if exclude else 0.8, zorder=5)
+                                marker='o', linestyle="None", color='k', alpha=0.4 if exclude else 0.8, zorder=5)
             if uplim:
                 self.ax.errorbar(l, s_nu/self.uplim_nsig*self.fd_conv,
-                                    marker='_', markersize=def_markersize, linestyle="None", color='k', alpha=0.4 if exclude else 0.8, zorder=5)
+                                    marker='_', linestyle="None", color='k', alpha=0.4 if exclude else 0.8, zorder=5)
     
     def set_axes(self, set_xrange, set_xlabel, set_ylabel, extra_yspace, rowi, coli):
         lfunc = lcoord_funcs(rowi=rowi, coli=coli, z=self.z)
@@ -1341,7 +1347,7 @@ class FIR_SED_fit:
         if set_xlabel == "bottom" or set_xlabel == "both":
             self.ax.set_xlabel(r"$\lambda_\mathrm{{ emit }} \, (\mathrm{\mu m})$")
         if set_ylabel:
-            self.ax.set_ylabel(r"$F_\mathrm{\nu, \, obs} \, (\mathrm{\mu Jy})$")
+            self.ax.set_ylabel(r"$F_\mathrm{{ \nu, \, obs }} \, (\mathrm{{ {} }})$".format(self.fluxdens_unit.replace("mu", r"\mu ")))
     
     def save_fig(self, pltfol, fig=None, ptype="constraints", obj_str=None, l0_list=None):
         if fig is None:

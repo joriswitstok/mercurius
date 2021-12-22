@@ -261,6 +261,50 @@ class FIR_SED_fit:
     def __init__(self, l0_list, analysis, mcrfol, fluxdens_unit="muJy", l_min=None, l_max=None,
                     fixed_T_dust=50.0, fixed_beta=None, cosmo=None,
                     T_lolim=False, T_uplim=False, pformat=None, dpi=None, mpl_style=None, verbose=True):
+        """Class `FIR_SED_fit` for interacting with the fitting and plotting routines of `mercurius`.
+
+        Parameters
+        ----------
+        l0_list : list
+            A list of opacity model classifiers. Entries can be `None` for an optically thin model,
+            `"self-consistent"` for a self-consistent opacity model, or a float setting a fixed
+            value of `lambda_0`, the wavelength in micron setting the SED's transition point between
+            optically thin and thick.
+        analysis : bool
+            Controls whether figures are made with slightly more detail (`True`) or  (`False`).
+        mcrfol : str
+            Name of the folder used for saving results of SED fits.
+        fluxdens_unit : str, optional
+            Unit of flux density in figures, by default `"muJy"`.
+        l_min : {None, float}, optional
+            Value in micron of the lower rest-frame wavelength bound in figures.
+            Default is `None`, which results in `50.0`.
+        l_max : {None, float}, optional
+            Value in micron of the upper rest-frame wavelength bound in figures.
+            Default is `None`, which results in `300.0`.
+        fixed_T_dust : float, optional
+            Fixed value of the dust temperature in Kelvin, set to `50.0` by default.
+        fixed_beta : {`None`, float}, optional
+            Fixed value of the dust emissivity beta, or `None` if variable (default).
+        cosmo : instance of astropy.cosmology.FLRW, optional
+            Custom cosmology (see `astropy` documentation for details).
+        T_lolim : bool, optional
+            Retrieve a lower limit (95% confidence) of the dust temperature? (Default: `False`.)
+        T_uplim : bool, optional
+            Retrieve an upper limit (95% confidence) of the dust temperature? (Default: `False`.)
+        pformat : str, optional
+            Extension to be used for saving figures. Default is `None`, which sets the format to
+            `".png"` (i.e. PNG image) if `analysis` is `True`, otherwise it is `".pdf"` (i.e. PDF).
+        dpi : {int, float}, optional
+            Quality to be used for saving figures. Default is `None`, which sets `dpi` to `150`.
+        mpl_style : str, optional
+            Path to custom `matplotlib` style file. Default is `None`, in which case no
+            custom file is used.
+        verbose : bool, optional
+            Controls whether progress updates and results are printed. Default is `True`.
+
+        """
+
         if verbose:
             print("\nInitialising FIR SED fitting object...")
         
@@ -325,6 +369,17 @@ class FIR_SED_fit:
             print("Initialisation done!")
     
     def set_fixed_values(self, fixed_T_dust, fixed_beta):
+        """Function for changing the fixed values of the dust temperature and emissivity.
+
+        Parameters
+        ----------
+        fixed_T_dust : float
+            Fixed value of the dust temperature in Kelvin.
+        fixed_beta : {`None`, float}
+            Fixed value of the dust emissivity beta, or `None` if variable.
+
+        """
+
         self.fixed_T_dust = fixed_T_dust
         self.fixed_beta = fixed_beta
         self.beta_str = "beta_{:.1f}".format(self.fixed_beta) if self.fixed_beta else "vary_beta"
@@ -332,7 +387,53 @@ class FIR_SED_fit:
     def set_data(self, obj, z,
                     lambda_emit_vals, S_nu_vals, S_nu_errs, cont_uplims, lambda_emit_ranges=None, cont_excludes=None, uplim_nsig=3.0,
                     obj_M=np.nan, obj_M_lowerr=np.nan, obj_M_uperr=np.nan, SFR_UV=np.nan, SFR_UV_err=np.nan,
-                    cont_area=None, cont_area_uplim=None, reference=None):
+                    cont_area=None, cont_area_uplim=False, reference=None):
+        """Function for setting the photometric data of the object.
+
+        Parameters
+        ----------
+        obj : str
+            Object name.
+        z : float
+            Redshift of the object.
+        lambda_emit_vals : array_like
+            Values of the rest-frame wavelengths in microns.
+        S_nu_vals : array_like
+            Values of the flux density in Jy.
+        S_nu_errs : array_like
+            Values of the flux density uncertainty in Jy.
+        cont_uplims : array_like
+            Boolean array indicating which data points are upper limits.
+        lambda_emit_ranges : {`None`, array_like}, optional
+            Lower and upper wavelength bounds given as an offset from the main wavelength values
+            (for visualisation only). Needs to be shape (N, 2) for N photometric data points.
+            Default is `None`, in which case bounds will not be shown.
+        cont_excludes : {`None`, array_like}, optional
+            Boolean array indicating which data points are ignored in the fitting process.
+            Default is `None` where none of the data are excluded.
+        uplim_nsig : float, optional
+            How many sigma is an upper limit given as? Default: `3.0`.
+        obj_M : float, optional
+            Stellar mass of object, in units of solar masses. Default: `np.nan` (i.e. unknown).
+        obj_M_lowerr : float, optional
+            Lower error on the stellar mass of the object, in units of solar masses.
+            Default: `np.nan` (i.e. unknown).
+        obj_M_uperr : float, optional
+            Upper error on the stellar mass of the object, in units of solar masses.
+            Default: `np.nan` (i.e. unknown).
+        SFR_UV : float, optional
+            The object's star formation rate (SFR) in the UV. Default: `np.nan` (i.e. unknown).
+        SFR_UV_err : float, optional
+            Uncertainty on the object's star formation rate (SFR) in the UV.
+            Default: `np.nan` (i.e. unknown).
+        cont_area : {`None`, float}, optional
+            Area of the dust emission in square kiloparsec, to be used in the self-consistent
+            opacity model. Default: `None` (i.e. unknown).
+        cont_area_uplim : bool, optional
+            Indicates whether the area is an upper limit. Default: `False`.
+
+        """
+
         if self.verbose:
             print("\nSetting photometric data points...")
         self.obj = obj
@@ -389,6 +490,42 @@ class FIR_SED_fit:
     
     def fit_data(self, pltfol, force_run=False, fit_uplims=True, return_samples=False,
                     n_live_points=400, evidence_tolerance=0.5, sampling_efficiency=0.8, max_iter=0, mnverbose=False):
+        """Function for fitting the photometric data of the object with greybody spectra for
+        all opacity models set in `l0_list`.
+
+        Parameters
+        ----------
+        pltfol : str
+            Path to folder in which corner plots of the results are saved.
+        force_run : bool, optional
+            Force a new run of the fitting routine, even if previous results are found.
+        fit_uplims : bool, optional
+            Include upper limits in the fitting routine?
+        return_samples : bool, optional
+            Return samples directly?
+        n_live_points : int, optional
+            Number of live points used in the MultiNest run. See the `pymultinest`
+            documentation for details.
+        evidence_tolerance : float, optional
+            Evidence tolerance value used in the MultiNest run. See the `pymultinest`
+            documentation for details.
+        sampling_efficiency : float, optional
+            Sampling efficiency value used in the MultiNest run. See the `pymultinest`
+            documentation for details.
+        max_iter : int, optional
+            Maximum number of iterations of the MultiNest run. See the `pymultinest`
+            documentation for details.
+        mnverbose : bool, optional
+            Controls whether the main output of the `pymultinest` solver is shown.
+        
+        Returns
+        ----------
+        flat_samples : array_like
+            If `return_samples` is set to `True`, an (N, 2) or (N, 3) array containing N samples of
+            the parameters that are varied is returned (depending on whether the dust emissivity is
+            varied, with `fixed_beta` equal to `None`, or kept constant).
+
+        """
         
         if self.all_uplims:
             print("Warning: only upper limits for {} specified! No MultiNest fit performed...".format(self.obj))
@@ -701,6 +838,17 @@ class FIR_SED_fit:
                 self.print_results(rdict, rtype="calculated")
     
     def print_results(self, rdict, rtype):
+        """Function for printing the results; designed for internal use.
+
+        Parameters
+        ----------
+        rdict : dict
+            Dictionary containing the main MultiNest results.
+        rtype : str
+            Type of estimates.
+
+        """
+
         M_dust_log10 = int(np.log10(rdict["M_dust"]))
         L_IR_log10 = int(np.log10(rdict["L_IR_Lsun"]))
         L_FIR_log10 = int(np.log10(rdict["L_FIR_Lsun"]))
@@ -740,6 +888,47 @@ class FIR_SED_fit:
     
     def plot_MN_fit(self, l0_list=None, fig=None, ax=None, pltfol=None, obj_str=None, single_plot=None,
                     set_xrange=True, set_xlabel="both", set_ylabel=True, extra_yspace=True, rowi=0, coli=0):
+        """Function for plotting the results of a MultiNest fit.
+
+        Parameters
+        ----------
+        l0_list : list, optional
+            A list of opacity model classifiers. Entries can be `None` for an optically thin model,
+            `"self-consistent"` for a self-consistent opacity model, or a float setting a fixed
+            value of `lambda_0`, the wavelength in micron setting the SED's transition point between
+            optically thin and thick. Default of `l0_list` is `None`, in which case the main `l0_list`,
+            given when creating the `FIR_SED_fit` instance, is used.
+        fig : {`None`, instance of `matplotlib.figure.Figure`}, optional
+            Figure instance to use for plotting. If `fig` and `ax` are not given, `plt.subplots()`
+            will be used to create them. Otherwise, if `fig` is given but `ax` is not,
+            `fig.add_subplot()` will be used to create `ax`. Default for `fig` is `None` (not set).
+        ax : {`None`, instance of `matplotlib.axes.Axes`}, optional
+            Axes instance to use for plotting. If `fig` and `ax` are not given, `plt.subplots()`
+            will be used to create them. Otherwise, if `ax` is given but `fig` is not,
+            `ax.get_figure()` will be used to retrieve `fig`. Default for `ax` is `None` (not set).
+        pltfol : {`None`, str}, optional
+            Path to folder in which figures are saved. Default is `None` (plots are not saved
+            directly).
+        single_plot : {`None`, bool}, optional
+            Controls whether a single plot is made for different opacity models. Default is `None`,
+            in which case a single plot will be made when `analysis` is `False`.
+        set_xrange : bool, optional
+            Manually set bounds on the rest-frame wavelength axis in the plots? Default is `True`.
+        set_xlabel : {`"top"`, `"bottom"`, `"both"`}, optional
+            Set labels on the rest-frame (bottom) and/or observed (top) wavelength axes in this plot?
+            Default is `"both"`.
+        set_ylabel : bool, optional
+            Set labels on the flux density axis in this plot? Default is `True`.
+        extra_yspace : bool, optional
+            Create more space by decreasing the lower flux density bound in this plot? Default is
+            `True`.
+        rowi : int, optional
+            Row number of this plot in a multi-panel figure. Default is `0`.
+        coli : int, optional
+            Column number of this plot in a multi-panel figure. Default is `0`.
+
+        """
+
         if self.all_uplims:
             print("Warning: only upper limits for {} specified! No MultiNest results plotted...".format(self.obj))
             return 1
@@ -858,6 +1047,70 @@ class FIR_SED_fit:
     def plot_ranges(self, l0, T_dusts=T_dusts_global, beta_IRs=beta_IRs_global, fixed_T_dust=None, fixed_beta=None, save_results=True,
                     fig=None, ax=None, pltfol=None, obj_str=None,
                     annotate_results=True, set_xrange=True, set_xlabel="both", set_ylabel=True, extra_yspace=True, rowi=0, coli=0):
+        """Function for plotting a range of greybody spectra tuned to the photometric data.
+
+        Notes
+        ----------
+        Normalisation of each greybody curve is performed according to the most constraining
+        upper limit, if available, or the highest SNR detection. Curves are considered
+        compatible if they fall below upper limits and within ±1σ of other detections.
+
+        Parameters
+        ----------
+        l0 : {`None`, "self-consistent", float}
+            Opacity model classifiers: `None` for an optically thin model, `"self-consistent"`
+            for a self-consistent opacity model, or a float setting a fixed value of `lambda_0`,
+            the wavelength in micron setting the SED's transition point between optically thin
+            and thick.
+        T_dusts : array_like, optional
+            Range of dust temperatures to be shown. Default is `T_dusts_global`, a range from
+            10 K to 110 K in steps of 10 K.
+        beta_IRs : array_like, optional
+            Range of dust emissivities to be shown. Default is `beta_IRs_global`, a range from
+            1.5 to 2 in steps of 0.1.
+        fixed_T_dust : {`None`, float}, optional
+            Fixed value of the dust temperature in Kelvin. Default is `None`, which will revert
+            to the main value of fixed_T_dust, given when creating the `FIR_SED_fit` instance.
+        fixed_beta : {`None`, float}, optional
+            Fixed value of the dust emissivity beta. Default is `None`, which will revert
+            to the main value of fixed_beta, given when creating the `FIR_SED_fit` instance.
+        save_results : bool, optional
+            Save results for a greybody spectrum with dust temperature `fixed_T_dust` and dust
+            emissivity `fixed_beta`? Default: `True`.
+        fig : {`None`, instance of `matplotlib.figure.Figure`}, optional
+            Figure instance to use for plotting. If `fig` and `ax` are not given, `plt.subplots()`
+            will be used to create them. Otherwise, if `fig` is given but `ax` is not,
+            `fig.add_subplot()` will be used to create `ax`. Default for `fig` is `None` (not set).
+        ax : {`None`, instance of `matplotlib.axes.Axes`}, optional
+            Axes instance to use for plotting. If `fig` and `ax` are not given, `plt.subplots()`
+            will be used to create them. Otherwise, if `ax` is given but `fig` is not,
+            `ax.get_figure()` will be used to retrieve `fig`. Default for `ax` is `None` (not set).
+        pltfol : {`None`, str}, optional
+            Path to folder in which figures are saved. Default is `None` (plots are not saved
+            directly).
+        obj_str : {`None`, str}, optional
+            String to be added to the filename of the figure. Default is `None`,
+            in which case the object name, preceded by an underscore, will be used.
+        annotate_results : bool, optional
+            Annotate the (range of) infrared luminosities found to be compatible for a given
+            dust temperature? Default is `True`.
+        set_xrange : bool, optional
+            Manually set bounds on the rest-frame wavelength axis in the plots? Default is `True`.
+        set_xlabel : {`"top"`, `"bottom"`, `"both"`}, optional
+            Set labels on the rest-frame (bottom) and/or observed (top) wavelength axes in this plot?
+            Default is `"both"`.
+        set_ylabel : bool, optional
+            Set labels on the flux density axis in this plot? Default is `True`.
+        extra_yspace : bool, optional
+            Create more space by decreasing the lower flux density bound in this plot? Default is
+            `True`.
+        rowi : int, optional
+            Row number of this plot in a multi-panel figure. Default is `0`.
+        coli : int, optional
+            Column number of this plot in a multi-panel figure. Default is `0`.
+
+        """
+
         if l0 == "self-consistent":
             print("Warning: ranges cannot be shown for a self-consistent opacity model! Continuing...")
             return 1
@@ -972,7 +1225,7 @@ class FIR_SED_fit:
                         # Only one detection, use as normalisation
                         cont_idx = list(self.cont_uplims).index(False)
                     else:
-                        # Choose highest S/N detection for normalisation
+                        # Choose highest SNR detection for normalisation
                         cont_idx = np.nanargmax(SNR_ratios)
 
                     # Normalise by detected continuum flux density (or upper limit thereof)
@@ -1212,6 +1465,10 @@ class FIR_SED_fit:
             self.save_fig(pltfol=pltfol, ptype="ranges", obj_str=obj_str, l0_list=[l0])
     
     def annotate_title(self):
+        """Function for annotating a figure with the main object properties; designed for internal use.
+
+        """
+
         ax = self.ax
 
         text = self.obj
@@ -1240,6 +1497,19 @@ class FIR_SED_fit:
         return prop_ann
     
     def annotate_results(self, rdict, axes_ann, ax_type):
+        """Function for annotating a figure with the main results of a greybody fit; designed for internal use.
+
+        Parameters
+        ----------
+        rdict : dict
+            Dictionary containing the main MultiNest results.
+        axes_ann : list
+            Sequence of two `matplotlib.axes.Axes` to be annotated.
+        ax_type : {`"regular"`, `"corner"`}
+            String indicating the type of figure being annotated.
+
+        """
+
         M_dust_log10 = int(np.log10(rdict["M_dust"]))
         L_IR_log10 = int(np.log10(rdict["L_IR_Lsun"]))
         L_FIR_log10 = int(np.log10(rdict["L_FIR_Lsun"]))
@@ -1318,6 +1588,10 @@ class FIR_SED_fit:
             ann.set_text(ann.get_text() + '\n' + text)
 
     def plot_data(self):
+        """Function for plotting the photometric data; designed for internal use.
+
+        """
+
         for l, lrange, s_nu, s_nuerr, uplim, exclude in zip(self.lambda_emit_vals, self.lambda_emit_ranges, self.S_nu_vals, self.S_nu_errs,
                                                             self.cont_uplims, self.cont_excludes):
             self.ax.errorbar(l, s_nu*self.fd_conv, xerr=lrange.reshape(2, 1),
@@ -1328,6 +1602,25 @@ class FIR_SED_fit:
                                     marker='_', linestyle="None", color='k', alpha=0.4 if exclude else 0.8, zorder=5)
     
     def set_axes(self, set_xrange, set_xlabel, set_ylabel, extra_yspace, rowi, coli):
+        """Function for setting up the axes in an SED plot; designed for internal use.
+
+        Parameters
+        ----------
+        set_xrange : bool
+            Manually set bounds on the rest-frame wavelength axis in the plots?
+        set_xlabel : {`"top"`, `"bottom"`, `"both"`}
+            Set labels on the rest-frame (bottom) and/or observed (top) wavelength axes in this plot?
+        set_ylabel : bool
+            Set labels on the flux density axis in this plot?
+        extra_yspace : bool
+            Create more space by decreasing the lower flux density bound in this plot?
+        rowi : int
+            Row number of this plot in a multi-panel figure.
+        coli : int
+            Column number of this plot in a multi-panel figure.
+
+        """
+
         lfunc = lcoord_funcs(rowi=rowi, coli=coli, z=self.z)
         l_obs_ax = self.ax.secondary_xaxis("top", functions=(lfunc.rf2obs, lfunc.obs2rf))
         l_obs_ax.tick_params(axis='x', which="both", bottom=False, top=True, labelbottom=False, labeltop=True)
@@ -1350,6 +1643,29 @@ class FIR_SED_fit:
             self.ax.set_ylabel(r"$F_\mathrm{{ \nu, \, obs }} \, (\mathrm{{ {} }})$".format(self.fluxdens_unit.replace("mu", r"\mu ")))
     
     def save_fig(self, pltfol, fig=None, ptype="constraints", obj_str=None, l0_list=None):
+        """Function for saving a figure; designed for internal use, but can also be used
+        externally.
+
+        Parameters
+        ----------
+        pltfol : str
+            Path to folder in which figures are saved.
+        fig : {`None`, instance of `matplotlib.figure.Figure`}, optional
+            Figure instance to be saved. Default is `None`, which will save the figure last
+            supplied or created in either `plot_MN_fit` or `plot_ranges`.
+        ptype : str, optional
+            String to be added to the filename of the figure, after `"FIR_SED_"`. Default
+            is `"constraints"`.
+        obj_str : {`None`, str}, optional
+            String to be added to the filename of the figure. Default is `None`,
+            in which case the object name, preceded by an underscore, will be used.
+        l0_list : {`None`, list}, optional
+            A list of opacity model classifiers to be added to the filename of the figure.
+            Default is `None`, which will revert to the main `l0_list`, given when creating
+            the `FIR_SED_fit` instance.
+
+        """
+
         if fig is None:
             fig = self.fig
         if obj_str is None:
@@ -1362,6 +1678,24 @@ class FIR_SED_fit:
         plt.close(fig)
     
     def get_l0string(self, l0):
+        """Function for creating a string of a list of opacity model classifiers; designed for
+        internal use.
+
+        Parameters
+        ----------
+        l0 : {`None`, "self-consistent", float}
+            Opacity model classifiers: `None` for an optically thin model, `"self-consistent"`
+            for a self-consistent opacity model, or a float setting a fixed value of `lambda_0`,
+            the wavelength in micron setting the SED's transition point between optically thin
+            and thick.
+        
+        Returns
+        ----------
+        l0_tuple : tuple
+            A tuple containing `(l0_str, l0_txt)`.
+
+        """
+
         if l0 == "self-consistent":
             l0_str = "_{}-l0".format(l0)
             l0_txt = " and {} λ_0".format(l0)
@@ -1372,6 +1706,30 @@ class FIR_SED_fit:
         return (l0_str, l0_txt)
     
     def get_mstring(self, l0_list=None, analysis=None, inc_astr=True):
+        """Function for creating a string to be used in a filename; designed for internal
+        use.
+
+        Parameters
+        ----------
+        l0_list : {`None`, list}, optional
+            A list of opacity model classifiers to be added to the filename of the figure.
+            Default is `None`, which will revert to the main `l0_list`, given when creating
+            the `FIR_SED_fit` instance.
+        analysis : {`None`, bool}, optional
+            Manually set the value of `analysis` to be used in the string. Default is `None`,
+            such that the main `analysis`, given when creating the `FIR_SED_fit` instance,
+            is used.
+        inc_astr : bool, optional
+            Controls whether the string will contain an identifier if `analysis` is `True`.
+            Default is `True`.
+        
+        Returns
+        ----------
+        mstring : str
+            A string to be used in a filename.
+
+        """
+
         if l0_list is None:
             l0_list = self.l0_list
         if analysis is None:

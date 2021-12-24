@@ -1,0 +1,18 @@
+# MERCURIUS environment in python 3
+name: mercurius3
+channels:
+  - astropy
+  - conda-forge
+dependencies:
+  - python=3.7
+  - numpy
+  - scipy
+  - astropy
+  - emcee
+  - pymultinest
+  - corner
+  - matplotlib
+  - seaborn
+  - mock
+  - notebook
+  - anaconda-clean

@@ -6,7 +6,7 @@ Script for running MultiNest fits on dust FIR SEDs.
 Joris Witstok, 17 November 2021
 """
 
-import os, sys
+import os, sys, shutil
 from mock import patch
 if __name__ == "__main__":
     print("Python", sys.version)
@@ -62,10 +62,6 @@ beta_IRs_global = np.arange(1.5, 2.05, 0.1)
 dust_colors = sns.color_palette("inferno", len(T_dusts_global))
 dust_cmap = sns.color_palette("inferno", as_cmap=True)
 dust_norm = matplotlib.colors.Normalize(vmin=0, vmax=T_dusts_global[-1])
-
-l0_linestyles = {None: '--', "self-consistent": '-', 100.0: '-.', 200.0: ':'}
-
-obj_colors = {obj: sns.color_palette("Set1", 9)[obji] for obji, obj in enumerate(["COS-2987030247", "COS-3018555981", "UVISTA-Z-007", "UVISTA-Z-019"])}
 
 
 
@@ -130,8 +126,8 @@ def FIR_SED_spectrum(theta, z, D_L, l0_dict, lambda_emit=None):
 
     # Compute IR SED fluxes only for the given (rest-frame) wavelengths
     lambda_emit, S_nu_emit = calc_FIR_SED(z=z, beta_IR=beta_IR, T_dust=T_dust,
-                                                    optically_thick_lambda_0=optically_thick_lambda_0,
-                                                    return_spectrum=True, lambda_emit=lambda_emit)
+                                            optically_thick_lambda_0=optically_thick_lambda_0,
+                                            return_spectrum=True, lambda_emit=lambda_emit)
     nu_emit = 299792458.0 * 1e6 / lambda_emit # Hz (lambda is in micron)
     
     # Flux density needs to be corrected for observing against the the CMB (NB: can be negative if T_dust < T_CMB), and then normalised
@@ -260,7 +256,8 @@ class MN_FIR_SED_solver(Solver):
 class FIR_SED_fit:
     def __init__(self, l0_list, analysis, mcrfol, fluxdens_unit="muJy", l_min=None, l_max=None,
                     fixed_T_dust=50.0, fixed_beta=None, cosmo=None,
-                    T_lolim=False, T_uplim=False, pformat=None, dpi=None, mpl_style=None, verbose=True):
+                    T_lolim=False, T_uplim=False,
+                    obj_color=None, l0_linestyles=None, pformat=None, dpi=None, mpl_style=None, verbose=True):
         """Class `FIR_SED_fit` for interacting with the fitting and plotting routines of `mercurius`.
 
         Parameters
@@ -292,6 +289,14 @@ class FIR_SED_fit:
             Retrieve a lower limit (95% confidence) of the dust temperature? (Default: `False`.)
         T_uplim : bool, optional
             Retrieve an upper limit (95% confidence) of the dust temperature? (Default: `False`.)
+        obj_color : {`None`, tuple, str}, optional
+            A custom `matplotlib` colour highlighting the name of the object in figures (see
+            `matplotlib` documentation on how to specify colours). Default is `None`: no
+            colour is used.
+        l0_linestyles : dict, optional
+            Dictionary for custom `matplotlib` linestyles for each opacity model in figures (see
+            `matplotlib` documentation on how to specify linestyles). Default is
+            `{None: '--', "self-consistent": '-', 100.0: '-.', 200.0: ':'}`.
         pformat : str, optional
             Extension to be used for saving figures. Default is `None`, which sets the format to
             `".png"` (i.e. PNG image) if `analysis` is `True`, otherwise it is `".pdf"` (i.e. PDF).
@@ -349,6 +354,13 @@ class FIR_SED_fit:
         self.T_uplim = T_uplim
         
         self.fresh_calculation = {l0: False for l0 in self.l0_list}
+        
+        self.obj_color = obj_color
+
+        if l0_linestyles is None:
+            self.l0_linestyles = {None: '--', "self-consistent": '-', 100.0: '-.', 200.0: ':'}
+        else:
+            self.l0_linestyles = l0_linestyles
         
         if pformat is None:
             self.pformat = ".png" if self.analysis else ".pdf"
@@ -488,7 +500,7 @@ class FIR_SED_fit:
         self.n_meas = self.lambda_emit_vals.size
         self.cont_det = ~self.cont_uplims * ~self.cont_excludes
     
-    def fit_data(self, pltfol, force_run=False, fit_uplims=True, return_samples=False,
+    def fit_data(self, pltfol, force_run=False, fit_uplims=True, return_samples=False, remove_mnfiles=False,
                     n_live_points=400, evidence_tolerance=0.5, sampling_efficiency=0.8, max_iter=0, mnverbose=False):
         """Function for fitting the photometric data of the object with greybody spectra for
         all opacity models set in `l0_list`.
@@ -553,7 +565,7 @@ class FIR_SED_fit:
             
             n_dim = 3 - bool(self.fixed_beta)
 
-            samples_fname = self.mcrfol + "{}_MN_FIR_SED_samples_{}{}.npz".format(self.obj, self.beta_str, l0_str)
+            samples_fname = self.mcrfol + "{}_MN_FIR_SED_flat_samples_{}{}.npz".format(self.obj, self.beta_str, l0_str)
             obtain_MN_samples = force_run or not os.path.isfile(samples_fname)
             
             omcrfol = self.mcrfol + "MultiNest_{}/".format(self.obj)
@@ -566,6 +578,8 @@ class FIR_SED_fit:
                             "with {}{}".format("β = {:.1f}".format(self.fixed_beta) if self.fixed_beta else "varying β", l0_txt),
                             "for {}...".format(self.obj))
                 
+                currentdir = os.getcwd()
+                
                 try:
                     os.chdir(omcrfol)
                     MN_solv = MN_FIR_SED_solver(z=self.z, D_L=self.D_L, l0_dict=l0_dict,
@@ -576,7 +590,12 @@ class FIR_SED_fit:
                                                 evidence_tolerance=evidence_tolerance, sampling_efficiency=sampling_efficiency, max_iter=max_iter,
                                                 resume=False, verbose=mnverbose and self.verbose)
                 except Exception as e:
+                    os.chdir(currentdir)
                     raise RuntimeError("error occurred while running MultiNest fit...\n{}".format(e))
+                
+                os.chdir(currentdir)
+                if remove_mnfiles:
+                    shutil.rmtree(omcrfol)
                 
                 # Note results are also saved as MNpost_equal_weights.dat; load with np.loadtxt(omcrfol + "MNpost_equal_weights.dat")[:, :n_dim]
                 flat_samples = MN_solv.samples
@@ -593,9 +612,6 @@ class FIR_SED_fit:
                 if self.verbose:
                     print("\nFreshly loaded MultiNest samples with {}{}".format("β = {:.1f}".format(self.fixed_beta) if self.fixed_beta else "varying β", l0_txt),
                             "for {}! Array size: {:.2g} MB".format(self.obj, flat_samples.nbytes/1e6))
-            
-            if return_samples:
-                return flat_samples
             
             n_samples = flat_samples.shape[0]
             logM_dust_samples = flat_samples[:, 0]
@@ -797,7 +813,6 @@ class FIR_SED_fit:
                     axes_c[ri, ci].hlines(np.percentile(data[ri], percentiles), xmin=0, xmax=1,
                                             transform=axes_c[ri, ci].get_yaxis_transform(), linestyles=['--', '-', '--'], color="grey")
                     axes_c[ri, ci].plot(np.percentile(data[ci], 50), np.percentile(data[ri], 50), color="grey", marker='s', mfc="None", mec="grey")
-            del data
             
             ax_c = axes_c[names.index("T_peak"), names.index("T_dust")]
             ax_c.plot(np.linspace(-10, 200, 10), np.linspace(-10, 200, 10), linestyle='--', color="lightgrey", alpha=0.6)
@@ -833,9 +848,14 @@ class FIR_SED_fit:
             
             # Save results
             np.savez_compressed(self.mcrfol + "{}_MN_FIR_SED_fit_{}{}.npz".format(self.obj, self.beta_str, l0_str), **rdict)
+            np.savez_compressed(self.mcrfol + "{}_MN_FIR_SED_data_samples_{}{}.npz".format(self.obj, self.beta_str, l0_str),
+                                data=data, names=names)
             self.fresh_calculation[l0] = True
             if self.verbose:
                 self.print_results(rdict, rtype="calculated")
+            
+            if return_samples:
+                return (data, names)
     
     def print_results(self, rdict, rtype):
         """Function for printing the results; designed for internal use.
@@ -878,12 +898,13 @@ class FIR_SED_fit:
         print('')
         
         if not np.isnan(self.obj_M):
-            print("Dust-to-stellar mass fraction: {:.1f} -{:.1f} +{:.1f} per cent".format(100.0*rdict["dust_frac"],
-                                                100.0*rdict["dust_frac_lowerr"], 100.0*rdict["dust_frac_uperr"]))
-            print("Dust yield (AGB): {:.1f} -{:.1f} +{:.1f} M_sun".format(rdict["dust_yield_AGB"],
-                                                rdict["dust_yield_AGB_lowerr"], rdict["dust_yield_AGB_uperr"]))
-            print("Dust yield (SN): {:.1f} -{:.1f} +{:.1f} M_sun".format(rdict["dust_yield_SN"],
-                                                rdict["dust_yield_SN_lowerr"], rdict["dust_yield_SN_uperr"]))
+            fmt = ".1f" if 100.0*rdict["dust_frac"] > 1 else ".2g"
+            print("Dust-to-stellar mass fraction: {:{fmt}} -{:{fmt}} +{:{fmt}} per cent".format(100.0*rdict["dust_frac"],
+                                                100.0*rdict["dust_frac_lowerr"], 100.0*rdict["dust_frac_uperr"], fmt=fmt))
+            print("Dust yield (AGB): {:{fmt}} -{:{fmt}} +{:{fmt}} M_sun".format(rdict["dust_yield_AGB"],
+                                                rdict["dust_yield_AGB_lowerr"], rdict["dust_yield_AGB_uperr"], fmt=fmt))
+            print("Dust yield (SN): {:{fmt}} -{:{fmt}} +{:{fmt}} M_sun".format(rdict["dust_yield_SN"],
+                                                rdict["dust_yield_SN_lowerr"], rdict["dust_yield_SN_uperr"], fmt=fmt))
             print('')
     
     def plot_MN_fit(self, l0_list=None, fig=None, ax=None, pltfol=None, obj_str=None, single_plot=None,
@@ -980,7 +1001,8 @@ class FIR_SED_fit:
             y2 = rdict["y2"]
             
             # Plot the observed spectrum (intrinsic spectrum is nearly the same apart from at the very red wavelengths above ~100 micron)
-            ax.plot(lambda_emit, S_nu_obs*self.fd_conv, linewidth=1.5, linestyle=l0_linestyles.get(l0, '-'), color=dcolor, alpha=0.8)
+            ax.plot(lambda_emit, S_nu_obs*self.fd_conv, linewidth=1.5,
+                    linestyle=self.l0_linestyles.get(l0, '-'), color=dcolor, alpha=0.8)
             
             ax.fill_between(lambda_emit, y1=y1*self.fd_conv, y2=y2*self.fd_conv, facecolor=dcolor, edgecolor="None", alpha=0.1)
             
@@ -1022,7 +1044,7 @@ class FIR_SED_fit:
                     label += '\n' + r"$\beta_\mathrm{{ IR }} = {:.1f}_{{ -{:.1f} }}^{{ +{:.1f} }}$".format(rdict["beta_IR"],
                                         rdict["beta_IR_lowerr"], rdict["beta_IR_uperr"])
                 if single_plot:
-                    handles.append(BTuple(([dcolor], [0.1], 1.5, l0_linestyles[l0], dcolor, 0.8), label + '\n'))
+                    handles.append(BTuple(([dcolor], [0.1], 1.5, self.l0_linestyles.get(l0, '-'), dcolor, 0.8), label + '\n'))
 
             if not single_plot:
                 self.plot_data()
@@ -1069,11 +1091,13 @@ class FIR_SED_fit:
             Range of dust emissivities to be shown. Default is `beta_IRs_global`, a range from
             1.5 to 2 in steps of 0.1.
         fixed_T_dust : {`None`, float}, optional
-            Fixed value of the dust temperature in Kelvin. Default is `None`, which will revert
-            to the main value of fixed_T_dust, given when creating the `FIR_SED_fit` instance.
+            Fixed value of the dust temperature in Kelvin used if saving results. Default is
+            `None`, which will revert to the main value of fixed_T_dust, given when creating
+            the `FIR_SED_fit` instance.
         fixed_beta : {`None`, float}, optional
-            Fixed value of the dust emissivity beta. Default is `None`, which will revert
-            to the main value of fixed_beta, given when creating the `FIR_SED_fit` instance.
+            Fixed value of the dust emissivity beta used if saving results. Default is `None`,
+            which will revert to the main value of fixed_beta, given when creating the
+            `FIR_SED_fit` instance.
         save_results : bool, optional
             Save results for a greybody spectrum with dust temperature `fixed_T_dust` and dust
             emissivity `fixed_beta`? Default: `True`.
@@ -1114,12 +1138,13 @@ class FIR_SED_fit:
         if l0 == "self-consistent":
             print("Warning: ranges cannot be shown for a self-consistent opacity model! Continuing...")
             return 1
-        if fixed_T_dust is None:
-            assert self.fixed_T_dust
-            fixed_T_dust = self.fixed_T_dust
-        if fixed_beta is None:
-            assert self.fixed_beta
-            fixed_beta = self.fixed_beta
+        if save_results:
+            if fixed_T_dust is None:
+                assert self.fixed_T_dust
+                fixed_T_dust = self.fixed_T_dust
+            if fixed_beta is None:
+                assert self.fixed_beta
+                fixed_beta = self.fixed_beta
 
         # Minimum/maximum observed flux (for plot scaling)
         self.F_nu_obs_min, self.F_nu_obs_max = np.inf, -np.inf
@@ -1155,12 +1180,14 @@ class FIR_SED_fit:
         fixed_vals_cb = False
         
         if self.verbose:
-            print("\nPlotting ranges on FIR SED of {}:".format(self.obj))
+            print("\nPlotting ranges on FIR SED of {}...".format(self.obj))
+            if save_results:
+                print("Selected fixed T_dust = {:.1f}, β = {:.1f}{}".format(fixed_T_dust, fixed_beta, self.get_l0string(l0)[1]))
         
         T_dust_handles = []
 
         for di, T_dust in enumerate(T_dusts):
-            if T_dust < T_CMB_obs*(1.0+self.z) or (T_dust > 100 and self.obj in ["COS-2987030247", "UVISTA-Z-007"]):
+            if T_dust < T_CMB_obs*(1.0+self.z):
                 continue
 
             lambda_emit_betas = []
@@ -1215,8 +1242,8 @@ class FIR_SED_fit:
 
                     cont_idx = np.nanargmax(normalisations)
                     normalisation = normalise(self.lambda_emit_vals[cont_idx], self.S_nu_vals[cont_idx])
-                    normalisation_lowerr = normalise(self.lambda_emit_vals[cont_idx], self.S_nu_vals[cont_idx]-self.S_nu_errs[cont_idx])
-                    normalisation_uperr = normalise(self.lambda_emit_vals[cont_idx], self.S_nu_vals[cont_idx]+self.S_nu_errs[cont_idx])
+                    normalisation_lowerr = np.nan
+                    normalisation_uperr = np.nan
 
                     # With only upper limits, all betas are always compatible
                     compatible_beta = True
@@ -1280,7 +1307,17 @@ class FIR_SED_fit:
                 L_FIR_Lsun_lowerr = F_FIR_lowerr * 4.0 * np.pi * self.D_L**2 / L_sun_ergs # L_sun
                 L_FIR_Lsun_uperr = F_FIR_uperr * 4.0 * np.pi * self.D_L**2 / L_sun_ergs # L_sun
 
-                if np.abs(T_dust - fixed_T_dust) < 1e-8 and np.abs(beta_IR - fixed_beta) < 1e-8:
+                # Add a 0.4 dex systematic uncertainty
+                if uplim:
+                    L_IR_Lsun *= np.sqrt(1 + (10**0.4)**2)
+                    L_FIR_Lsun *= np.sqrt(1 + (10**0.4)**2)
+                else:
+                    L_IR_Lsun_lowerr *= np.sqrt(1 + (10**0.4)**2)
+                    L_IR_Lsun_uperr *= np.sqrt(1 + (10**0.4)**2)
+                    L_FIR_Lsun_lowerr *= np.sqrt(1 + (10**0.4)**2)
+                    L_FIR_Lsun_uperr *= np.sqrt(1 + (10**0.4)**2)
+
+                if save_results and np.abs(T_dust - fixed_T_dust) < 1e-8 and np.abs(beta_IR - fixed_beta) < 1e-8:
                     fixed_vals_cb = compatible_beta
                     if not compatible_beta:
                         if self.verbose:
@@ -1288,20 +1325,15 @@ class FIR_SED_fit:
                                                                                                                         fixed_beta, self.uplim_nsig))
 
                     # Estimate of the dust mass (S_nu in Jy, 1e-26 = W/m^2/Hz/Jy, self.D_L in cm, κ_nu in cm^2/g, Planck_func in W/m^2/Hz, M_sun = 1.989e33 g)
-                    S_nu_emit_ref = np.interp(wl_star/1e4, lambda_emit, S_nu_emit)
+                    S_nu_emit_ref = np.interp(wl_star*1e6, lambda_emit, S_nu_emit)
                     rdict["M_dust_uplim"] = uplim
-                    rdict["M_dust"] = S_nu_emit_ref * self.D_L**2 / (M_sun_g * 8.94 * Planck_func(nu_star, T_dust) * 1e26)
+                    rdict["M_dust"] = S_nu_emit_ref * self.D_L**2 / (M_sun_g * k_nu_star * Planck_func(nu_star, T_dust) * 1e26)
                     if uplim:
                         rdict["M_dust_lowerr"], rdict["M_dust_uperr"] = np.nan, np.nan
                     else:
                         S_nu_emit_ref_errs = np.array([S_nu_emit_ref, S_nu_emit_ref]) / np.nanmean(SNR_ratios)
-                        rdict["M_dust_lowerr"], rdict["M_dust_uperr"] = S_nu_emit_ref_errs * self.D_L**2 / (M_sun_g * 8.94 * Planck_func(nu_star, T_dust) * 1e26)
+                        rdict["M_dust_lowerr"], rdict["M_dust_uperr"] = S_nu_emit_ref_errs * self.D_L**2 / (M_sun_g * k_nu_star * Planck_func(nu_star, T_dust) * 1e26)
             
-                    # Add an (asymmetric) systematic uncertainty, since κ_ν actually ranges from 28.4 (28.4/8.94 ~ 0.5 dex)
-                    # to 5.57 (8.94/5.57 ~ 0.2 dex) in cm^2/g (note a higher κ_ν means a lower dust mass)
-                    # rdict["M_dust_lowerr"] = rdict["M_dust"] - (rdict["M_dust"] - rdict["M_dust_lowerr"]) * 8.94/28.4
-                    # rdict["M_dust_uperr"] = (rdict["M_dust"] + rdict["M_dust_uperr"]) * 8.94/5.57 - rdict["M_dust"]
-
                     rdict["dust_frac"] = rdict["M_dust"] / self.obj_M
                     rdict["dust_frac_lowerr"] = rdict["dust_frac"] * np.sqrt((rdict["M_dust_lowerr"]/rdict["M_dust"])**2 + (self.obj_M_uperr/self.obj_M)**2)
                     rdict["dust_frac_uperr"] = rdict["dust_frac"] * np.sqrt((rdict["M_dust_uperr"]/rdict["M_dust"])**2 + (self.obj_M_lowerr/self.obj_M)**2)
@@ -1457,7 +1489,7 @@ class FIR_SED_fit:
                     print("Dust yield (SN): {} M_sun".format(valstr('', rdict["dust_yield_SN"],
                                                         rdict["dust_yield_SN_lowerr"], rdict["dust_yield_SN_uperr"], '')))
                 else:
-                    print(" incompatible with measurements!")
+                    print("\nincompatible with measurements!")
     
         self.plot_data()
         self.set_axes(set_xrange=set_xrange, set_xlabel=set_xlabel, set_ylabel=set_ylabel, extra_yspace=extra_yspace, rowi=rowi, coli=coli)
@@ -1478,7 +1510,7 @@ class FIR_SED_fit:
             bbox_col = 'w'
         else:
             size = "large"
-            bbox_col = obj_colors[self.obj]
+            bbox_col = self.obj_color if self.obj_color else 'w'
         
         ax.annotate(text=text, xy=(0, 1), xytext=(8, -8), xycoords="axes fraction", textcoords="offset points",
                     color='k', size=size, va="top", ha="left").set_bbox(dict(boxstyle="Round, pad=0.05", facecolor=bbox_col, edgecolor="None", alpha=0.8))

@@ -1,6 +1,6 @@
-# mercurius
+# MERCURIUS
 
-# Contents
+## Contents
 1. [Description](#Description)
 2. [Installation and setup](#Installation)
     - [Cloning](#Cloning)
@@ -34,7 +34,7 @@ Running `mercurius` requires the following Python packages:
 - `seaborn`
 - `mock`
   
-The file `mercurius3.yml` can be used to create an `conda` environment in Python 3 (see the (`conda` documentation)[https://docs.conda.io/projects/conda/en/latest/user-guide/tasks/manage-environments.html] for more details) containing all the required modules:
+The file `mercurius3.yml` can be used to create an `conda` environment in Python 3 (see the `conda` [documentation on environments](https://docs.conda.io/projects/conda/en/latest/user-guide/tasks/manage-environments.html) for more details) containing all the required modules:
 
 ```
 conda env create -f mercurius3.yml
@@ -67,7 +67,7 @@ f = FIR_SED_fit(l0_list=[None], analysis=True, mcrfol=mcrfol)
 
 The variable `l0_list` is a list of opacity model classifiers, where entries can be `None` for an optically thin model, `"self-consistent"` for a self-consistent opacity model (which requires `cont_area`, the deconvolved area of the dust emission in square kiloparsec, to be given in the next step), or a float setting a fixed value of `lambda_0`, the wavelength in micron setting the SED's transition point between optically thin and thick.
 
-Now, a source and its corresponding FIR photometry can be specified through the function `set_data`. In this example, we consider the star-forming galaxy A1689-zD1 at a redshift of 7.13 (e.g. (Bakx et al. 2021)[https://ui.adsabs.harvard.edu/abs/2021MNRAS.508L..58B/abstract])). This source has been detected in four ALMA bands, so all upper limits (`cont_uplims`) are set to `False`:
+Now, a source and its corresponding FIR photometry can be specified through the function `set_data`. In this example, we consider the star-forming galaxy A1689-zD1 at a redshift of 7.13 (e.g. [Bakx et al. 2021](https://ui.adsabs.harvard.edu/abs/2021MNRAS.508L..58B/abstract)). This source has been detected in four ALMA bands, so all upper limits (`cont_uplims`) are set to `False`:
 
 ```python
 f.set_data(obj="A1689-zD1", z=7.13,

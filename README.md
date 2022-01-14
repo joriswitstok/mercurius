@@ -84,6 +84,11 @@ for l0 in f.l0_list:
     f.plot_ranges(l0=l0, save_results=False, pltfol=pltfol)
 ```
 
+This creates the following figure:
+<br>
+<img src="/test/MN_plots/FIR_SED_ranges_A1689-zD1_analysis.png" width="800">
+<br>
+
 A MultiNest fit for each the opacity models in `f.l0_list` can be initiated with `fit_data` (although `fit_uplims=True` here, there are no upper limits to be taken into account):
 
 ```python
@@ -91,8 +96,18 @@ f.fit_data(pltfol=pltfol, force_run=False, fit_uplims=True, remove_mnfiles=True,
             n_live_points=2000, evidence_tolerance=0.001, mnverbose=False)
 ```
 
+Since `pltfol` is specified in the call to `fit_data`, the posterior distributions will be shown in a figure produced with the `corner` module:
+<br>
+<img src="/test/MN_plots/Corner_MN_A1689-zD1.png" width="800">
+<br>
+
 Finally, the results of the fitting routine are visualised with `plot_MN_fit`:
 
 ```python
 f.plot_MN_fit(pltfol=pltfol)
 ```
+
+This produces the figure shown below:
+<br>
+<img src="/test/MN_plots/FIR_SED_MN_fit_A1689-zD1_analysis.png" width="800">
+<br>

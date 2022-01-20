@@ -46,10 +46,11 @@ nu_CII = 299792458.0 / wl_CII # Hz
 # Dust mass absorption coefficient at frequency nu_star
 # nu_star = 2998.0e9 # Hz
 # k_nu_star = 52.2 # cm^2/g
+
+# Values for dust ejected from SNe after reverse shock destruction from Hirashita et al. (2014): https://ui.adsabs.harvard.edu/abs/2014MNRAS.443.1704H/abstract
 wl_star = wl_CII
 nu_star = nu_CII # Hz
-k_nu_star = 8.94 # cm^2/g (ranges from ~5 to ~30; see Hirashita et al. 2014)
-# k_nu = 8.94 # cm^2/g
+k_nu_star = 8.94 # cm^2/g (other values range from ~5 to ~30)
 
 # Solar luminosity in erg/s
 L_sun_ergs = 3.828e26 * 1e7
@@ -217,7 +218,7 @@ class MN_FIR_SED_solver(Solver):
 
         self.cube_range = [logM_dust_range, T_dust_range]
         if not self.fixed_beta:
-            beta_range = [1, 3]
+            beta_range = [1, 4]
         
             self.cube_range.append(beta_range)
         
@@ -245,6 +246,7 @@ class MN_FIR_SED_solver(Solver):
 
         # Calculate the log likelihood given both detections and upper limits according to the formalism in Sawicki et al. (2012):
         # first part is a regular normalised least-squares sum, second part is integrating the Gaussian probability up to the 1σ detection limit
+        # (see Sawicki et al. 2012 for details: https://ui.adsabs.harvard.edu/abs/2012PASP..124.1208S/abstract)
         ll = -0.5 * np.nansum(((self.fluxes[~self.uplims] - model_fluxes[~self.uplims])/self.flux_errs[~self.uplims])**2)
 
         if np.any(self.uplims) and self.fit_uplims:
@@ -500,7 +502,7 @@ class FIR_SED_fit:
         self.n_meas = self.lambda_emit_vals.size
         self.cont_det = ~self.cont_uplims * ~self.cont_excludes
     
-    def fit_data(self, pltfol, force_run=False, fit_uplims=True, return_samples=False, remove_mnfiles=False,
+    def fit_data(self, pltfol, force_run=False, fit_uplims=True, return_samples=False, lambda_emit=None, remove_mnfiles=False,
                     n_live_points=400, evidence_tolerance=0.5, sampling_efficiency=0.8, max_iter=0, mnverbose=False):
         """Function for fitting the photometric data of the object with greybody spectra for
         all opacity models set in `l0_list`.
@@ -515,6 +517,12 @@ class FIR_SED_fit:
             Include upper limits in the fitting routine?
         return_samples : bool, optional
             Return samples directly?
+        lambda_emit : array_like, optional
+            Values in micron to be used as the rest-frame wavelengths in results,
+            including the (F)IR luminosities. Default is `None`, which will default
+            to a linearly spaced array of 10,000 points ranging between 4 and 1100
+            micron in the function `calc_FIR_SED` (located in
+            `mercurius/aux/infrared_luminosity.py`).
         n_live_points : int, optional
             Number of live points used in the MultiNest run. See the `pymultinest`
             documentation for details.
@@ -604,14 +612,14 @@ class FIR_SED_fit:
                 np.savez_compressed(samples_fname, flat_samples=flat_samples)
                 if self.verbose:
                     print("\nFreshly calculated MultiNest samples with {}{}".format("β = {:.1f}".format(self.fixed_beta) if self.fixed_beta else "varying β", l0_txt),
-                            "for {}! Array size: {:.2g} MB".format(self.obj, flat_samples.nbytes/1e6))
+                            "for {}!\nNumber of samples: {:d}, array size: {:.2g} MB".format(self.obj, flat_samples.shape[0], flat_samples.nbytes/1e6))
             else:
                 # Read in samples from the MN run
                 flat_samples = np.load(samples_fname)["flat_samples"]
 
                 if self.verbose:
                     print("\nFreshly loaded MultiNest samples with {}{}".format("β = {:.1f}".format(self.fixed_beta) if self.fixed_beta else "varying β", l0_txt),
-                            "for {}! Array size: {:.2g} MB".format(self.obj, flat_samples.nbytes/1e6))
+                            "for {}!\nNumber of samples: {:d}, array size: {:.2g} MB".format(self.obj, flat_samples.shape[0], flat_samples.nbytes/1e6))
             
             n_samples = flat_samples.shape[0]
             logM_dust_samples = flat_samples[:, 0]
@@ -694,11 +702,12 @@ class FIR_SED_fit:
             
             # Get the normalised spectrum for the best-fit parameters
             lambda_emit, nu_emit, rdict["S_nu_emit"], rdict["S_nu_obs"] = FIR_SED_spectrum(theta=(np.log10(rdict["M_dust"]), T_dust, beta_IR),
-                                                                                            z=self.z, D_L=self.D_L, l0_dict=l0_dict)
+                                                                                            z=self.z, D_L=self.D_L, l0_dict=l0_dict, lambda_emit=lambda_emit)
             rdict["lambda_emit"] = lambda_emit
             rdict["nu_emit"] = nu_emit
 
-            S_nu_emit_samples = np.array([FIR_SED_spectrum(theta=sample, z=self.z, D_L=self.D_L, l0_dict=l0_dict)[2] for sample in flat_samples])
+            S_nu_emit_samples = np.array([FIR_SED_spectrum(theta=sample, z=self.z, D_L=self.D_L,
+                                                            l0_dict=l0_dict, lambda_emit=lambda_emit)[2] for sample in flat_samples])
 
             # Loop over samples of S_nu_emit to find uncertainty of L_IR
             L_IR_Lsun_samples = []
@@ -735,7 +744,8 @@ class FIR_SED_fit:
             
             del S_nu_emit_samples
             
-            S_nu_obs_samples = np.array([FIR_SED_spectrum(theta=sample, z=self.z, D_L=self.D_L, l0_dict=l0_dict)[3] for sample in flat_samples])
+            S_nu_obs_samples = np.array([FIR_SED_spectrum(theta=sample, z=self.z, D_L=self.D_L,
+                                                            l0_dict=l0_dict, lambda_emit=lambda_emit)[3] for sample in flat_samples])
             del flat_samples
             
             rdict["y1"], rdict["y2"] = np.percentile(S_nu_obs_samples, [0.5*(100-68.2689), 0.5*(100+68.2689)], axis=0)
@@ -821,23 +831,23 @@ class FIR_SED_fit:
             ax_c.axvline(T_CMB_obs*(1.0+self.z), linestyle='--', color='k', alpha=0.6)
             ax_c.annotate(text=r"$T_\mathrm{{ CMB }} (z = {:.6g})$".format(self.z), xy=(T_CMB_obs*(1.0+self.z), 0.5), xytext=(-2, 0),
                             xycoords=ax_c.get_xaxis_transform(), textcoords="offset points", rotation="vertical",
-                            size="xx-small", va="center", ha="right").set_bbox(dict(boxstyle="Round, pad=0.05", facecolor='w', edgecolor="None", alpha=0.8))
+                            va="center", ha="right", size="xx-small", alpha=0.8).set_bbox(dict(boxstyle="Round, pad=0.05", facecolor='w', edgecolor="None", alpha=0.8))
             if self.T_lolim or self.T_uplim:
                 ax_c.axvline(T_lim, color="grey", alpha=0.6)
                 ax_c.annotate(text=("Lower" if self.T_lolim else "Upper") + " limit (95% conf.)", xy=(T_lim, 1), xytext=(2, -4),
                                 xycoords=ax_c.get_xaxis_transform(), textcoords="offset points", rotation="vertical",
-                                size="xx-small", va="top", ha="left").set_bbox(dict(boxstyle="Round, pad=0.05", facecolor='w', edgecolor="None", alpha=0.8))
+                                va="top", ha="left", size="xx-small", alpha=0.8).set_bbox(dict(boxstyle="Round, pad=0.05", facecolor='w', edgecolor="None", alpha=0.8))
             
             ax_c = axes_c[names.index("T_peak"), names.index("T_peak")]
             ax_c.axvline(T_CMB_obs*(1.0+self.z), linestyle='--', color='k', alpha=0.6)
             ax_c.annotate(text=r"$T_\mathrm{{ CMB }} (z = {:.6g})$".format(self.z), xy=(T_CMB_obs*(1.0+self.z), 0.5), xytext=(-2, 0),
                             xycoords=ax_c.get_xaxis_transform(), textcoords="offset points", rotation="vertical",
-                            size="xx-small", va="center", ha="right").set_bbox(dict(boxstyle="Round, pad=0.05", facecolor='w', edgecolor="None", alpha=0.8))
+                            va="center", ha="right", size="xx-small", alpha=0.8).set_bbox(dict(boxstyle="Round, pad=0.05", facecolor='w', edgecolor="None", alpha=0.8))
             if self.T_lolim or self.T_uplim:
                 ax_c.axvline(rdict["T_peak"], color="grey", alpha=0.6)
                 ax_c.annotate(text=("Lower" if self.T_lolim else "Upper") + " limit (95% conf.)", xy=(rdict["T_peak"], 1), xytext=(2, -4),
                                 xycoords=ax_c.get_xaxis_transform(), textcoords="offset points", rotation="vertical",
-                                size="xx-small", va="top", ha="left").set_bbox(dict(boxstyle="Round, pad=0.05", facecolor='w', edgecolor="None", alpha=0.8))
+                                va="top", ha="left", size="xx-small", alpha=0.8).set_bbox(dict(boxstyle="Round, pad=0.05", facecolor='w', edgecolor="None", alpha=0.8))
             
             self.annotate_results(rdict, [axes_c[0, -1], axes_c[1, -1]], ax_type="corner")
             cfig.savefig(pltfol + "Corner_MN_" + self.obj + self.get_mstring(l0_list=[l0], inc_astr=False) + self.pformat,
@@ -892,9 +902,9 @@ class FIR_SED_fit:
             print("\tor T_dust < {:.1f} K at z = 0".format(rdict["T_uplim_z0"]))
             print("T_peak < {:.1f} K (95% confidence)".format(rdict["T_peak_uplim"]))
         if self.fixed_beta:
-            print("beta_IR = {:.1f} (fixed)".format(rdict["beta_IR"]))
+            print("beta_IR = {:.2g} (fixed)".format(rdict["beta_IR"]))
         else:
-            print("beta_IR = {:.1f} -{:.1f} +{:.1f}".format(rdict["beta_IR"], rdict["beta_IR_lowerr"], rdict["beta_IR_uperr"]))
+            print("beta_IR = {:.2g} -{:.2g} +{:.2g}".format(rdict["beta_IR"], rdict["beta_IR_lowerr"], rdict["beta_IR_uperr"]))
         print('')
         
         if not np.isnan(self.obj_M):
@@ -1200,7 +1210,7 @@ class FIR_SED_fit:
 
             for bi, beta_IR in enumerate(beta_IRs):
                 lambda_emit, S_nu_emit = calc_FIR_SED(z=self.z, beta_IR=beta_IR, T_dust=T_dust,
-                                                                optically_thick_lambda_0=l0, return_spectrum=True)
+                                                        optically_thick_lambda_0=l0, return_spectrum=True)
                 nu_emit = 299792458.0 * 1e6 / lambda_emit # Hz (lambda is in micron)
                 
                 # Flux density needs to be corrected for observing against the the CMB (NB: can be negative if T_dust < T_CMB), and then normalised
@@ -1225,7 +1235,7 @@ class FIR_SED_fit:
                 def normalise(wl, flux, norm=1):
                     return (flux*self.fd_conv) / np.interp(wl, lambda_emit, S_nu_emit_CMB_att * norm)
                 
-                uplim = np.all(self.cont_uplims)
+                uplim = np.all(self.cont_uplims[~self.cont_excludes])
                 
                 if uplim:
                     normalisations = []
@@ -1250,7 +1260,7 @@ class FIR_SED_fit:
                 else:
                     if np.sum(self.cont_det) == 1:
                         # Only one detection, use as normalisation
-                        cont_idx = list(self.cont_uplims).index(False)
+                        cont_idx = list(self.cont_det).index(True)
                     else:
                         # Choose highest SNR detection for normalisation
                         cont_idx = np.nanargmax(SNR_ratios)
@@ -1441,7 +1451,7 @@ class FIR_SED_fit:
         for cb_ann_text_offset_colour in cb_ann_text_offset_colours:
             ax.annotate(text=cb_ann_text_offset_colour[0], xy=(0.025, 0.025), xytext=(0, 16*cb_ann_text_offset_colour[1]),
                         xycoords="axes fraction", textcoords="offset points", va="bottom", ha="left", color='k',
-                        size="x-small").set_bbox(dict(boxstyle="Round, pad=0.05", facecolor='w', edgecolor=cb_ann_text_offset_colour[2], alpha=0.8))
+                        size="x-small", alpha=0.8).set_bbox(dict(boxstyle="Round, pad=0.05", facecolor='w', edgecolor=cb_ann_text_offset_colour[2], alpha=0.8))
         
         rdict["T_peak"] = np.nan
         rdict["T_peak_err"] = np.nan
@@ -1513,7 +1523,7 @@ class FIR_SED_fit:
             bbox_col = self.obj_color if self.obj_color else 'w'
         
         ax.annotate(text=text, xy=(0, 1), xytext=(8, -8), xycoords="axes fraction", textcoords="offset points",
-                    color='k', size=size, va="top", ha="left").set_bbox(dict(boxstyle="Round, pad=0.05", facecolor=bbox_col, edgecolor="None", alpha=0.8))
+                    va="top", ha="left", color='k', size=size, alpha=0.8, zorder=6).set_bbox(dict(boxstyle="Round, pad=0.05", facecolor=bbox_col, edgecolor="None", alpha=0.8))
 
         text = r"$z = {:.6g}$, $T_\mathrm{{ CMB }} = {:.2f} \, \mathrm{{ K }}$".format(self.z, T_CMB_obs*(1.0+self.z))
         if not np.isnan(self.obj_M):
@@ -1523,7 +1533,7 @@ class FIR_SED_fit:
             text += '\n' + r"$\mathrm{{ SFR_{{UV}} }} = {:.0f}{}".format(self.SFR_UV, r'' if np.isnan(self.SFR_UV_err) else r" \pm {:.0f}".format(self.SFR_UV_err)) + \
                     r" \, \mathrm{{M_\odot yr^{{-1}}}}$"
         prop_ann = ax.annotate(text=text, xy=(1, 1), xytext=(-8, -8), xycoords="axes fraction", textcoords="offset points",
-                                va="top", ha="right", color='k', size="small")
+                                va="top", ha="right", color='k', size="small", alpha=0.8, zorder=6)
         prop_ann.set_bbox(dict(boxstyle="Round, pad=0.05", facecolor='w', edgecolor="None", alpha=0.8))
 
         return prop_ann
@@ -1598,10 +1608,11 @@ class FIR_SED_fit:
         ann.set_bbox(dict(boxstyle="Round, pad=0.05", facecolor='w', edgecolor="None", alpha=0.8))
         
         if self.fixed_beta:
-            beta_str = r"$\beta_\mathrm{{ IR }} = {:.1f}$ (fixed)".format(rdict["beta_IR"])
+            beta_str = r"$\beta_\mathrm{{ IR }} = {:.2g}$ (fixed)".format(rdict["beta_IR"])
         else:
-            beta_str = r"$\beta_\mathrm{{ IR }} = {:.1f}_{{ -{:.1f} }}^{{ +{:.1f} }}$".format(rdict["beta_IR"],
-                        rdict["beta_IR_lowerr"], rdict["beta_IR_uperr"])
+            prec = max(0, 2-math.floor(np.log10(min(rdict["beta_IR_lowerr"], rdict["beta_IR_uperr"]))))
+            beta_str = r"$\beta_\mathrm{{ IR }} = {:.{prec}f}_{{ -{:.{prec}f} }}^{{ +{:.{prec}f} }}$".format(rdict["beta_IR"],
+                        rdict["beta_IR_lowerr"], rdict["beta_IR_uperr"], prec=prec)
         
         text = '\n' + r"$T_\mathrm{{ dust }} = {:.0f}_{{ -{:.0f} }}^{{ +{:.0f} }} \, \mathrm{{ K }}".format(rdict["T_dust"],
                     rdict["T_dust_lowerr"], rdict["T_dust_uperr"]) + T_lim_str + \
@@ -1627,7 +1638,7 @@ class FIR_SED_fit:
         for l, lrange, s_nu, s_nuerr, uplim, exclude in zip(self.lambda_emit_vals, self.lambda_emit_ranges, self.S_nu_vals, self.S_nu_errs,
                                                             self.cont_uplims, self.cont_excludes):
             self.ax.errorbar(l, s_nu*self.fd_conv, xerr=lrange.reshape(2, 1),
-                                yerr=(s_nu-s_nu/self.uplim_nsig)*self.fd_conv if uplim else s_nuerr*self.fd_conv, uplims=uplim,
+                                yerr=0.5*s_nu*self.fd_conv if uplim else s_nuerr*self.fd_conv, uplims=uplim,
                                 marker='o', linestyle="None", color='k', alpha=0.4 if exclude else 0.8, zorder=5)
             if uplim:
                 self.ax.errorbar(l, s_nu/self.uplim_nsig*self.fd_conv,

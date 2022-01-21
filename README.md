@@ -70,6 +70,8 @@ While the code is running, this should produce output in the terminal informing 
 
 ### <a name="Understanding_the_code_usage"></a>Understanding the code's usage
 
+#### <a name="Initialisation"></a>Initialisation
+
 The main functionality is accessed through an `FIR_SED_fit` object, which can be imported after the main folder has been added to the `PYTHONPATH`. We also create two subfolders for saving the results and figures created in the next steps.
 
 ```python
@@ -89,6 +91,8 @@ f = FIR_SED_fit(l0_list=[None], analysis=True, mcrfol=mcrfol)
 
 The variable `l0_list` is a list of opacity model classifiers, where entries can be `None` for an optically thin model, `"self-consistent"` for a self-consistent opacity model (which requires `cont_area`, the deconvolved area of the dust emission in square kiloparsec, to be given in the next step), or a float setting a fixed value of `lambda_0`, the wavelength in micron setting the SED's transition point between optically thin and thick.
 
+#### <a name="Specifying_input_photometry"></a>Specifying input photometry
+
 Now, a source and its corresponding FIR photometry can be specified through the function `set_data`. In this example, we consider the star-forming galaxy A1689-zD1 at a redshift of 7.13 (e.g. [Bakx et al. 2021](https://ui.adsabs.harvard.edu/abs/2021MNRAS.508L..58B/abstract)). This source has been detected in four ALMA bands, so all upper limits (`cont_uplims`) are set to `False`:
 
 ```python
@@ -98,6 +102,8 @@ f.set_data(obj="A1689-zD1", z=7.13,
 ```
 
 Here, we have not set `cont_area` (precluding the use of a self-consistent opacity model, identified via `"self-consistent"` entry in `l0_list`). Instead, we only look at an entirely optically thin SED (hence `l0_list = [None]` in the first step). It is possible, however, to consider a fixed value of `lambda_0`, without specifying `cont_area`.
+
+#### <a name="First_look_of_the_data"></a>First look of the data
 
 For a first look, the `plot_ranges` function creates a figure with a range of dust temperatures and emissivities. Note that if `save_results=True`, this will also print and save the results for a given temperature and emissivity, specified with `fixed_T_dust` and `fixed_beta` in calling `plot_ranges` or earlier in the creation of the `FIR_SED_fit` instance.
 
@@ -111,6 +117,8 @@ This creates the figure below, in which the various coloured greybody curves ind
 <img src="/test/MN_plots/FIR_SED_ranges_A1689-zD1_analysis.png" width="800">
 <br>
 
+#### <a name="Executing_the_fitting_routine"></a>Executing the fitting routine
+
 A MultiNest fit for each the opacity models in `f.l0_list` can be initiated with `fit_data` (although `fit_uplims=True` here, there are no upper limits to be taken into account):
 
 ```python
@@ -122,6 +130,8 @@ Since `pltfol` is specified in the call to `fit_data`, the posterior distributio
 <br>
 <img src="/test/MN_plots/Corner_MN_A1689-zD1.png" width="800">
 <br>
+
+#### <a name="Plotting_results_of_the_fitting_routine"></a>Plotting results of the fitting routine
 
 Finally, the results of the fitting routine are visualised with `plot_MN_fit`:
 

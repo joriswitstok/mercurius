@@ -32,8 +32,7 @@ sns.set_style("ticks")
 
 from aux.star_formation import SFR_L
 from aux.infrared_luminosity import T_CMB_obs, inv_CMB_heating, CMB_correction, Planck_func, calc_FIR_SED
-
-from General.mpl.Legend.legend_handler import BTuple, BTupleHandler
+from aux.legend_handler import BTuple, BTupleHandler
 
 # Import astropy cosmology, given H0 and Omega_matter
 from astropy.cosmology import FLRW, FlatLambdaCDM

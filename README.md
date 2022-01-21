@@ -15,7 +15,7 @@ Multimodal Estimation Routine for the Cosmological Unravelment of Rest-frame Inf
 
 ### <a name="Cloning"></a>Cloning
 
-First, clone the repository using e.g.
+First, obtain the latest version of the `mercurius` code. For example, you can clone the repository by navigating to your desired installation folder and using
 
 ```
 git clone https://github.com/joriswitstok/mercurius.git
@@ -34,21 +34,39 @@ Running `mercurius` requires the following Python packages:
 - `seaborn`
 - `mock`
   
-The file `mercurius3.yml` can be used to create an `conda` environment in Python 3 (see the `conda` [documentation on environments](https://docs.conda.io/projects/conda/en/latest/user-guide/tasks/manage-environments.html) for more details) containing all the required modules:
+One way to ensure all these modules are installed is via the file `mercurius3.yml` provided in the main folder, which can be used to create an `conda` environment in Python 3 (see the `conda` [documentation on environments](https://docs.conda.io/projects/conda/en/latest/user-guide/tasks/manage-environments.html) for more details) containing all the required packages.
+
+If you have `conda` installed and set up as a `python` distribution, this can be achieved with:
 
 ```
 conda env create -f mercurius3.yml
 ```
 
-Before running the code, activate the environment using
+Before running the code, the environment needs to be activated using
 
 ```
 conda activate mercurius3
 ```
 
+By default, the terminal will indicate the environment is active by showing a prompt similar to:
+
+```
+(mercurius3) $ 
+```
+
 ## <a name="Example_usage"></a>Example usage
 
-This section runs through an example usage case of `mercurius`. The main functionality is accessed through an `FIR_SED_fit` object, which can be imported after the main folder has been added to the `PYTHONPATH`. We also create two subfolders for saving the results and figures created in the next steps.
+This section goes through an example usage case of `mercurius` by running the file `test.py` (located in the `test` folder). The first step is to activate the environment [as explained in the previous section](#Package_requirements). So, starting from the main folder, the script would be run as follows:
+
+```
+$ conda activate mercurius3
+(mercurius3) $ cd test/
+(mercurius3) $ python test.py
+```
+
+While the script is running, this should produce output in the terminal informing the user about the input choices and photometry as well as the progress of the fitting procedure. When it has finished, the code will have saved several data files (in the the `MN_results` folder) and figures (in `MN_plots`). Below, the functionality is explained step by step.
+
+The main functionality is accessed through an `FIR_SED_fit` object, which can be imported after the main folder has been added to the `PYTHONPATH`. We also create two subfolders for saving the results and figures created in the next steps.
 
 ```python
 import sys

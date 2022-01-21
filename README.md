@@ -56,7 +56,9 @@ By default, the terminal will indicate the environment is active by showing a pr
 
 ## <a name="Example_usage"></a>Example usage
 
-This section goes through an example usage case of `mercurius` by running the file `test.py` (located in the `test` folder). The first step is to activate the environment [as explained in the previous section](#Package_requirements). So, starting from the main folder, the script would be run as follows:
+### <a name="Running_the_test_script"></a>Running the test script
+
+This section goes through an example usage case of `mercurius` by running the file `test.py` (located in the `test` folder). The first step is to activate the environment as explained in [the previous section](#Package_requirements). So, starting from the main folder, the script would be run as follows:
 
 ```
 $ conda activate mercurius3
@@ -64,7 +66,9 @@ $ conda activate mercurius3
 (mercurius3) $ python test.py
 ```
 
-While the script is running, this should produce output in the terminal informing the user about the input choices and photometry as well as the progress of the fitting procedure. When it has finished, the code will have saved several data files (in the the `MN_results` folder) and figures (in `MN_plots`). Below, the functionality is explained step by step.
+While the code is running, this should produce output in the terminal informing the user about the input choices and photometry as well as the progress of the fitting procedure. If it has finished successfully, several figures will have been saved in the `MN_plots` folder. It will also have created data files containing results of the fitting routine (in `MN_results`) that can be loaded in subsequent runs to speed up the code. Below, the functionality is explained step by step.
+
+### <a name="Understanding_the_code_usage"></a>Understanding the code's usage
 
 The main functionality is accessed through an `FIR_SED_fit` object, which can be imported after the main folder has been added to the `PYTHONPATH`. We also create two subfolders for saving the results and figures created in the next steps.
 

@@ -1570,27 +1570,39 @@ class FIR_SED_fit:
             T_z0_lim_str = r'$'
         
         # Annotate results
-        text = r"$L_\mathrm{{ IR }} = {:.1f}_{{ -{:.1f} }}^{{ +{:.1f} }} \cdot 10^{{ {:d} }} \, \mathrm{{ L_\odot }}$".format(rdict["L_IR_Lsun"]/10**L_IR_log10,
-                    rdict["L_IR_Lsun_lowerr"]/10**L_IR_log10, rdict["L_IR_Lsun_uperr"]/10**L_IR_log10, L_IR_log10) + \
-                '\n' + r"$L_\mathrm{{ FIR }} = {:.1f}_{{ -{:.1f} }}^{{ +{:.1f} }} \cdot 10^{{ {:d} }} \, \mathrm{{ L_\odot }}$".format(rdict["L_FIR_Lsun"]/10**L_FIR_log10,
-                    rdict["L_FIR_Lsun_lowerr"]/10**L_FIR_log10, rdict["L_FIR_Lsun_uperr"]/10**L_FIR_log10, L_FIR_log10) + \
-                '\n' + r"$\mathrm{{ SFR_{{IR}} }} = {:.0f}_{{ -{:.0f} }}^{{ +{:.0f} }} \, \mathrm{{ M_\odot \, yr^{{-1}} }}$".format(rdict["SFR_IR"],
-                    *rdict["SFR_IR_err"]) + \
-                "\n\n" + r"$M_\mathrm{{ dust }} = {:.1f}_{{ -{:.1f} }}^{{ +{:.1f} }} \cdot 10^{{ {:d} }} \, \mathrm{{ M_\odot }}$".format(rdict["M_dust"]/10**M_dust_log10,
-                    rdict["M_dust_lowerr"]/10**M_dust_log10, rdict["M_dust_uperr"]/10**M_dust_log10, M_dust_log10)
+        prec_IR = max(0, 2-math.floor(np.log10(min(rdict["L_IR_Lsun_lowerr"]/10**L_IR_log10, rdict["L_IR_Lsun_uperr"]/10**L_IR_log10))))
+        prec_FIR = max(0, 2-math.floor(np.log10(min(rdict["L_FIR_Lsun_lowerr"]/10**L_FIR_log10, rdict["L_FIR_Lsun_uperr"]/10**L_FIR_log10))))
+        prec_SFR = max(0, 2-math.floor(np.log10(np.min(rdict["SFR_IR_err"])))) if np.min(rdict["SFR_IR_err"]) < 1 else 0
+        prec_M = max(0, 2-math.floor(np.log10(min(rdict["M_dust_lowerr"]/10**M_dust_log10, rdict["M_dust_uperr"]/10**M_dust_log10))))
+        
+        text = r"$L_\mathrm{{ IR }} = {:.{prec}f}_{{ -{:.{prec}f} }}^{{ +{:.{prec}f} }} \cdot 10^{{ {:d} }} \, \mathrm{{ L_\odot }}$".format(rdict["L_IR_Lsun"]/10**L_IR_log10,
+                    rdict["L_IR_Lsun_lowerr"]/10**L_IR_log10, rdict["L_IR_Lsun_uperr"]/10**L_IR_log10, L_IR_log10, prec=prec_IR) + \
+                '\n' + r"$L_\mathrm{{ FIR }} = {:.{prec}f}_{{ -{:.{prec}f} }}^{{ +{:.{prec}f} }} \cdot 10^{{ {:d} }} \, \mathrm{{ L_\odot }}$".format(rdict["L_FIR_Lsun"]/10**L_FIR_log10,
+                    rdict["L_FIR_Lsun_lowerr"]/10**L_FIR_log10, rdict["L_FIR_Lsun_uperr"]/10**L_FIR_log10, L_FIR_log10, prec=prec_FIR) + \
+                '\n' + r"$\mathrm{{ SFR_{{IR}} }} = {:.{prec}f}_{{ -{:.{prec}f} }}^{{ +{:.{prec}f} }} \, \mathrm{{ M_\odot \, yr^{{-1}} }}$".format(rdict["SFR_IR"],
+                    *rdict["SFR_IR_err"], prec=prec_SFR) + \
+                "\n\n" + r"$M_\mathrm{{ dust }} = {:.{prec}f}_{{ -{:.{prec}f} }}^{{ +{:.{prec}f} }} \cdot 10^{{ {:d} }} \, \mathrm{{ M_\odot }}$".format(rdict["M_dust"]/10**M_dust_log10,
+                    rdict["M_dust_lowerr"]/10**M_dust_log10, rdict["M_dust_uperr"]/10**M_dust_log10, M_dust_log10, prec=prec_M)
         if self.valid_cont_area:
-            text += '\n' + r"$\Sigma_\mathrm{{ dust }} {} {:.1f}_{{ -{:.1f} }}^{{ +{:.1f} }} \, \mathrm{{ M_\odot \, pc^{{-2}} }}$".format(Sigma_sign,
-                    rdict["Sigma_dust"], rdict["Sigma_dust_lowerr"], rdict["Sigma_dust_uperr"]) + \
-                '\n' + r"$\lambda_0 {} {:.1f}_{{ -{:.1f} }}^{{ +{:.1f} }} \, \mathrm{{ \mu m }}$".format(lambda_0_sign, rdict["lambda_0"],
-                    rdict["lambda_0_lowerr"], rdict["lambda_0_uperr"])
+            prec_Sig = max(0, 2-math.floor(np.log10(min(rdict["Sigma_dust_lowerr"], rdict["Sigma_dust_uperr"]))))
+            prec_l0 = max(0, 2-math.floor(np.log10(min(rdict["lambda_0_lowerr"], rdict["lambda_0_uperr"]))))
+
+            text += '\n' + r"$\Sigma_\mathrm{{ dust }} {} {:.{prec}f}_{{ -{:.{prec}f} }}^{{ +{:.{prec}f} }} \, \mathrm{{ M_\odot \, pc^{{-2}} }}$".format(Sigma_sign,
+                    rdict["Sigma_dust"], rdict["Sigma_dust_lowerr"], rdict["Sigma_dust_uperr"], prec=prec_Sig) + \
+                '\n' + r"$\lambda_0 {} {:.{prec}f}_{{ -{:.{prec}f} }}^{{ +{:.{prec}f} }} \, \mathrm{{ \mu m }}$".format(lambda_0_sign, rdict["lambda_0"],
+                    rdict["lambda_0_lowerr"], rdict["lambda_0_uperr"], prec=prec_l0)
         
         if not np.isnan(rdict["dust_frac"]):
-            text += '\n' + r"$M_\mathrm{{ dust }} / M_* = {:.1f}_{{ -{:.1f} }}^{{ +{:.1f} }} \%$".format(100.0*rdict["dust_frac"],
-                                100.0*rdict["dust_frac_lowerr"], 100.0*rdict["dust_frac_uperr"]) + \
-                    '\n' + r"Dust yield (AGB, SN): ${:.1f}_{{ -{:.1f} }}^{{ +{:.1f} }} \, \mathrm{{ M_\odot }}$, ".format(rdict["dust_yield_AGB"],
-                                rdict["dust_yield_AGB_lowerr"], rdict["dust_yield_AGB_uperr"]) + \
-                            r"${:.1f}_{{ -{:.1f} }}^{{ +{:.1f} }} \, \mathrm{{ M_\odot }}$".format(rdict["dust_yield_SN"],
-                                rdict["dust_yield_SN_lowerr"], rdict["dust_yield_SN_uperr"])
+            prec_fr = max(0, 2-math.floor(np.log10(100.0*min(rdict["dust_frac_lowerr"], rdict["dust_frac_uperr"]))))
+            prec_yAGB = max(0, 2-math.floor(np.log10(min(rdict["dust_yield_AGB_lowerr"], rdict["dust_yield_AGB_uperr"]))))
+            prec_ySN = max(0, 2-math.floor(np.log10(min(rdict["dust_yield_SN_lowerr"], rdict["dust_yield_SN_uperr"]))))
+
+            text += '\n' + r"$M_\mathrm{{ dust }} / M_* = {:.{prec}f}_{{ -{:.{prec}f} }}^{{ +{:.{prec}f} }} \%$".format(100.0*rdict["dust_frac"],
+                                100.0*rdict["dust_frac_lowerr"], 100.0*rdict["dust_frac_uperr"], prec=prec_fr) + \
+                    '\n' + r"Dust yield (AGB, SN): ${:.{prec}f}_{{ -{:.{prec}f} }}^{{ +{:.{prec}f} }} \, \mathrm{{ M_\odot }}$, ".format(rdict["dust_yield_AGB"],
+                                rdict["dust_yield_AGB_lowerr"], rdict["dust_yield_AGB_uperr"], prec=prec_yAGB) + \
+                            r"${:.{prec}f}_{{ -{:.{prec}f} }}^{{ +{:.{prec}f} }} \, \mathrm{{ M_\odot }}$".format(rdict["dust_yield_SN"],
+                                rdict["dust_yield_SN_lowerr"], rdict["dust_yield_SN_uperr"], prec=prec_ySN)
         
         if ax_type == "regular":
             xy = (0, 0)
@@ -1613,13 +1625,15 @@ class FIR_SED_fit:
             beta_str = r"$\beta_\mathrm{{ IR }} = {:.{prec}f}_{{ -{:.{prec}f} }}^{{ +{:.{prec}f} }}$".format(rdict["beta_IR"],
                         rdict["beta_IR_lowerr"], rdict["beta_IR_uperr"], prec=prec)
         
-        text = '\n' + r"$T_\mathrm{{ dust }} = {:.0f}_{{ -{:.0f} }}^{{ +{:.0f} }} \, \mathrm{{ K }}".format(rdict["T_dust"],
-                    rdict["T_dust_lowerr"], rdict["T_dust_uperr"]) + T_lim_str + \
-                '\n' + r"$T_\mathrm{{ dust }}^{{ z=0 }} = {:.0f}_{{ -{:.0f} }}^{{ +{:.0f} }} \, \mathrm{{ K }}".format(rdict["T_dust_z0"],
-                            rdict["T_dust_z0_lowerr"], rdict["T_dust_z0_uperr"]) + T_z0_lim_str + \
-                '\n' + r"$T_\mathrm{{ peak }} = {:.0f}_{{ -{:.0f} }}^{{ +{:.0f} }} \, \mathrm{{ K }}".format(rdict["T_peak_val"],
-                            rdict["T_peak_lowerr"], rdict["T_peak_uperr"]) + \
-                                (r" {} {:.0f} \, \mathrm{{ K }}$".format(r'>' if self.T_lolim else r'<', rdict["T_peak"]) if self.T_lolim or self.T_uplim else r'$') + \
+        prec = max(0, 2-math.floor(np.log10(100.0*min(rdict["T_dust_lowerr"], rdict["T_dust_uperr"]))))
+
+        text = '\n' + r"$T_\mathrm{{ dust }} = {:.{prec}f}_{{ -{:.{prec}f} }}^{{ +{:.{prec}f} }} \, \mathrm{{ K }}".format(rdict["T_dust"],
+                    rdict["T_dust_lowerr"], rdict["T_dust_uperr"], prec=prec) + T_lim_str + \
+                '\n' + r"$T_\mathrm{{ dust }}^{{ z=0 }} = {:.{prec}f}_{{ -{:.{prec}f} }}^{{ +{:.{prec}f} }} \, \mathrm{{ K }}".format(rdict["T_dust_z0"],
+                            rdict["T_dust_z0_lowerr"], rdict["T_dust_z0_uperr"], prec=prec) + T_z0_lim_str + \
+                '\n' + r"$T_\mathrm{{ peak }} = {:.{prec}f}_{{ -{:.{prec}f} }}^{{ +{:.{prec}f} }} \, \mathrm{{ K }}".format(rdict["T_peak_val"],
+                            rdict["T_peak_lowerr"], rdict["T_peak_uperr"], prec=prec) + \
+                                (r" {} {:.{prec}f} \, \mathrm{{ K }}$".format(r'>' if self.T_lolim else r'<', rdict["T_peak"], prec=prec) if self.T_lolim or self.T_uplim else r'$') + \
                 '\n' + beta_str
         
         if ax_type == "regular":

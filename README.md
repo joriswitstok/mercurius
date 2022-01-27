@@ -98,7 +98,10 @@ Now, a source and its corresponding FIR photometry can be specified through the 
 ```python
 f.set_data(obj="A1689-zD1", z=7.13,
             lambda_emit_vals=[1.33e3/(1.0+7.13), 0.873e3/(1.0+7.13), 0.728e3/(1.0+7.13), 0.427e3/(1.0+7.13)],
-            S_nu_vals=[60e-6, 143e-6, 180e-6, 154e-6], S_nu_errs=[11e-6, 15e-6, 39e-6, 37e-6], cont_uplims=[False, False, False, False], reference="Knudsen et al. (2017);\nInoue et al. (2020); Bakx et al. (2021)")
+            S_nu_vals=[60e-6, 143e-6, 180e-6, 154e-6],
+            S_nu_errs=[11e-6, 15e-6, 39e-6, 37e-6],
+            cont_uplims=[False, False, False, False],
+            reference="Knudsen et al. (2017);\nInoue et al. (2020); Bakx et al. (2021)")
 ```
 
 Here, we have not set `cont_area` (precluding the use of a self-consistent opacity model, identified via `"self-consistent"` entry in `l0_list`). Instead, we only look at an entirely optically thin SED (hence `l0_list = [None]` in the first step). It is possible, however, to consider a fixed value of `lambda_0`, without specifying `cont_area`.

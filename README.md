@@ -125,8 +125,8 @@ This creates the figure below, in which the various coloured greybody curves ind
 A MultiNest fit for each the opacity models in `f.l0_list` can be initiated with `fit_data` (although `fit_uplims=True` here, there are no upper limits to be taken into account):
 
 ```python
-f.fit_data(pltfol=pltfol, force_run=False, fit_uplims=True, remove_mnfiles=True,
-            n_live_points=2000, evidence_tolerance=0.001, mnverbose=False)
+f.fit_data(pltfol=pltfol, fit_uplims=True, n_live_points=2000, evidence_tolerance=0.001,
+            force_run=False, remove_mnfiles=True, mnverbose=False)
 ```
 
 Since `pltfol` is specified in the call to `fit_data`, the posterior distributions will be shown in a figure produced with the `corner` module:

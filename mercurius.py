@@ -217,7 +217,7 @@ class MN_FIR_SED_solver(Solver):
 
         self.cube_range = [logM_dust_range, T_dust_range]
         if not self.fixed_beta:
-            beta_range = [1, 4]
+            beta_range = [1, 5]
         
             self.cube_range.append(beta_range)
         
@@ -255,7 +255,7 @@ class MN_FIR_SED_solver(Solver):
         return ll
 
 class FIR_SED_fit:
-    def __init__(self, l0_list, analysis, mcrfol, fluxdens_unit="muJy", l_min=None, l_max=None,
+    def __init__(self, l0_list, analysis, mnrfol, fluxdens_unit="muJy", l_min=None, l_max=None,
                     fixed_T_dust=50.0, fixed_beta=None, cosmo=None,
                     T_lolim=False, T_uplim=False,
                     obj_color=None, l0_linestyles=None, pformat=None, dpi=None, mpl_style=None, verbose=True):
@@ -270,7 +270,7 @@ class FIR_SED_fit:
             optically thin and thick.
         analysis : bool
             Controls whether figures are made with slightly more detail (`True`) or  (`False`).
-        mcrfol : str
+        mnrfol : str
             Name of the folder used for saving results of SED fits.
         fluxdens_unit : str, optional
             Unit of flux density in figures, by default `"muJy"`.
@@ -316,7 +316,7 @@ class FIR_SED_fit:
         
         self.l0_list = l0_list
         self.analysis = analysis
-        self.mcrfol = mcrfol
+        self.mnrfol = mnrfol
 
         if fluxdens_unit:
             assert fluxdens_unit in ["Jy", "mJy", "muJy", "nJy"]
@@ -450,6 +450,7 @@ class FIR_SED_fit:
         if self.verbose:
             print("\nSetting photometric data points...")
         self.obj = obj
+        self.obj_fn = self.obj.replace(' ', '_')
         self.z = z
         self.D_L = self.cosmo.luminosity_distance(self.z).to("cm").value
         
@@ -501,8 +502,9 @@ class FIR_SED_fit:
         self.n_meas = self.lambda_emit_vals.size
         self.cont_det = ~self.cont_uplims * ~self.cont_excludes
     
-    def fit_data(self, pltfol, force_run=False, fit_uplims=True, return_samples=False, lambda_emit=None, remove_mnfiles=False,
-                    n_live_points=400, evidence_tolerance=0.5, sampling_efficiency=0.8, max_iter=0, mnverbose=False):
+    def fit_data(self, pltfol, fit_uplims=True, return_samples=False, lambda_emit=None,
+                    n_live_points=400, evidence_tolerance=0.5, sampling_efficiency=0.8, max_iter=0,
+                    force_run=False, skip_redundant_calc=False, remove_mnfiles=False, mnverbose=False):
         """Function for fitting the photometric data of the object with greybody spectra for
         all opacity models set in `l0_list`.
 
@@ -510,8 +512,6 @@ class FIR_SED_fit:
         ----------
         pltfol : str
             Path to folder in which corner plots of the results are saved.
-        force_run : bool, optional
-            Force a new run of the fitting routine, even if previous results are found.
         fit_uplims : bool, optional
             Include upper limits in the fitting routine?
         return_samples : bool, optional
@@ -534,6 +534,12 @@ class FIR_SED_fit:
         max_iter : int, optional
             Maximum number of iterations of the MultiNest run. See the `pymultinest`
             documentation for details.
+        force_run : bool, optional
+            Force a new run of the fitting routine, even if previous results are found.
+        skip_redundant_calc : bool, optional
+            Entirely skip the data fitting (including the calculation of ) if results are already present?
+        remove_mnfiles : bool, optional
+            Remove files created by MultiNest after a run?
         mnverbose : bool, optional
             Controls whether the main output of the `pymultinest` solver is shown.
         
@@ -557,6 +563,7 @@ class FIR_SED_fit:
         for l0 in self.l0_list:
             # Without knowing the source's area, can only fit an optically thin SED or one with fixed lambda_0
             if l0 == "self-consistent" and not self.valid_cont_area:
+                print("\nWithout a valid area, cannot run MultiNest fit with a self-consistent lambda_0 for {}...".format(self.obj))
                 continue
             
             l0_dict = {"cont_area_kpc2": self.cont_area}
@@ -572,12 +579,17 @@ class FIR_SED_fit:
             
             n_dim = 3 - bool(self.fixed_beta)
 
-            samples_fname = self.mcrfol + "{}_MN_FIR_SED_flat_samples_{}{}.npz".format(self.obj, self.beta_str, l0_str)
+            samples_fname = self.mnrfol + "{}_MN_FIR_SED_flat_samples_{}{}.npz".format(self.obj_fn, self.beta_str, l0_str)
+            if skip_redundant_calc and os.path.isfile(samples_fname):
+                print("\nResults already present: skipping {:d}-dimensional MultiNest fit".format(n_dim),
+                        "with {}{}".format("β = {:.1f}".format(self.fixed_beta) if self.fixed_beta else "varying β", l0_txt),
+                        "for {}...".format(self.obj))
+                continue
             obtain_MN_samples = force_run or not os.path.isfile(samples_fname)
             
-            omcrfol = self.mcrfol + "MultiNest_{}/".format(self.obj)
-            if not os.path.exists(omcrfol):
-                os.makedirs(omcrfol)
+            omnrfol = self.mnrfol + "MultiNest_{}/".format(self.obj)
+            if not os.path.exists(omnrfol):
+                os.makedirs(omnrfol)
 
             if obtain_MN_samples:
                 if self.verbose:
@@ -588,7 +600,7 @@ class FIR_SED_fit:
                 currentdir = os.getcwd()
                 
                 try:
-                    os.chdir(omcrfol)
+                    os.chdir(omnrfol)
                     MN_solv = MN_FIR_SED_solver(z=self.z, D_L=self.D_L, l0_dict=l0_dict,
                                                 fluxes=self.S_nu_vals[~self.cont_excludes], flux_errs=self.S_nu_errs[~self.cont_excludes],
                                                 uplims=self.cont_uplims[~self.cont_excludes], wls=self.lambda_emit_vals[~self.cont_excludes],
@@ -602,10 +614,11 @@ class FIR_SED_fit:
                 
                 os.chdir(currentdir)
                 if remove_mnfiles:
-                    shutil.rmtree(omcrfol)
+                    shutil.rmtree(omnrfol)
                 
-                # Note results are also saved as MNpost_equal_weights.dat; load with np.loadtxt(omcrfol + "MNpost_equal_weights.dat")[:, :n_dim]
+                # Note results are also saved as MNpost_equal_weights.dat; load with np.loadtxt(omnrfol + "MNpost_equal_weights.dat")[:, :n_dim]
                 flat_samples = MN_solv.samples
+                del MN_solv
                 
                 # Save results
                 np.savez_compressed(samples_fname, flat_samples=flat_samples)
@@ -849,15 +862,15 @@ class FIR_SED_fit:
                                 va="top", ha="left", size="xx-small", alpha=0.8).set_bbox(dict(boxstyle="Round, pad=0.05", facecolor='w', edgecolor="None", alpha=0.8))
             
             self.annotate_results(rdict, [axes_c[0, -1], axes_c[1, -1]], ax_type="corner")
-            cfig.savefig(pltfol + "Corner_MN_" + self.obj + self.get_mstring(l0_list=[l0], inc_astr=False) + self.pformat,
+            cfig.savefig(pltfol + "Corner_MN_" + self.obj_fn + self.get_mstring(l0_list=[l0], inc_astr=False) + self.pformat,
                             dpi=self.dpi, bbox_inches="tight")
     
             # plt.show()
             plt.close(cfig)
             
             # Save results
-            np.savez_compressed(self.mcrfol + "{}_MN_FIR_SED_fit_{}{}.npz".format(self.obj, self.beta_str, l0_str), **rdict)
-            np.savez_compressed(self.mcrfol + "{}_MN_FIR_SED_data_samples_{}{}.npz".format(self.obj, self.beta_str, l0_str),
+            np.savez_compressed(self.mnrfol + "{}_MN_FIR_SED_fit_{}{}.npz".format(self.obj_fn, self.beta_str, l0_str), **rdict)
+            np.savez_compressed(self.mnrfol + "{}_MN_FIR_SED_data_samples_{}{}.npz".format(self.obj_fn, self.beta_str, l0_str),
                                 data=data, names=names)
             self.fresh_calculation[l0] = True
             if self.verbose:
@@ -990,7 +1003,7 @@ class FIR_SED_fit:
             
             l0_str, l0_txt = self.get_l0string(l0)
 
-            rdict_fname = self.mcrfol + "{}_MN_FIR_SED_fit_{}{}.npz".format(self.obj, self.beta_str, l0_str)
+            rdict_fname = self.mnrfol + "{}_MN_FIR_SED_fit_{}{}.npz".format(self.obj_fn, self.beta_str, l0_str)
             if os.path.isfile(rdict_fname):
                 rdict = np.load(rdict_fname)
             else:
@@ -1075,8 +1088,8 @@ class FIR_SED_fit:
             if pltfol:
                 self.save_fig(pltfol=pltfol, ptype="MN_fit", obj_str=obj_str)
     
-    def plot_ranges(self, l0, T_dusts=T_dusts_global, beta_IRs=beta_IRs_global, fixed_T_dust=None, fixed_beta=None, save_results=True,
-                    fig=None, ax=None, pltfol=None, obj_str=None,
+    def plot_ranges(self, l0, T_dusts=T_dusts_global, beta_IRs=beta_IRs_global, fixed_T_dust=None, fixed_beta=None, lambda_emit=None,
+                    save_results=True, fig=None, ax=None, pltfol=None, obj_str=None,
                     annotate_results=True, set_xrange=True, set_xlabel="both", set_ylabel=True, extra_yspace=True, rowi=0, coli=0):
         """Function for plotting a range of greybody spectra tuned to the photometric data.
 
@@ -1107,6 +1120,12 @@ class FIR_SED_fit:
             Fixed value of the dust emissivity beta used if saving results. Default is `None`,
             which will revert to the main value of fixed_beta, given when creating the
             `FIR_SED_fit` instance.
+        lambda_emit : array_like, optional
+            Values in micron to be used as the rest-frame wavelengths in results,
+            including the (F)IR luminosities. Default is `None`, which will default
+            to a linearly spaced array of 10,000 points ranging between 4 and 1100
+            micron in the function `calc_FIR_SED` (located in
+            `mercurius/aux/infrared_luminosity.py`).
         save_results : bool, optional
             Save results for a greybody spectrum with dust temperature `fixed_T_dust` and dust
             emissivity `fixed_beta`? Default: `True`.
@@ -1209,7 +1228,7 @@ class FIR_SED_fit:
 
             for bi, beta_IR in enumerate(beta_IRs):
                 lambda_emit, S_nu_emit = calc_FIR_SED(z=self.z, beta_IR=beta_IR, T_dust=T_dust,
-                                                        optically_thick_lambda_0=l0, return_spectrum=True)
+                                                        optically_thick_lambda_0=l0, return_spectrum=True, lambda_emit=lambda_emit)
                 nu_emit = 299792458.0 * 1e6 / lambda_emit # Hz (lambda is in micron)
                 
                 # Flux density needs to be corrected for observing against the the CMB (NB: can be negative if T_dust < T_CMB), and then normalised
@@ -1218,7 +1237,7 @@ class FIR_SED_fit:
                     # No normalisation possible (T_dust < T_CMB) and so any upper limit is compatible, continue
                     continue
                 else:
-                    if self.analysis:
+                    if self.analysis and np.any(CMB_correction_factor < 0.9):
                         # Show where the correction is 90%
                         ax.axvline(x=lambda_emit[np.argmin(np.abs(CMB_correction_factor - 0.9))], linestyle='--', color=dust_colors[di], alpha=0.8)
                         if di == 2 and bi == 0:
@@ -1458,7 +1477,7 @@ class FIR_SED_fit:
         
         if save_results:
             # Save results
-            np.savez_compressed(self.mcrfol + "{}_FIR_SED_parameters_{}{}{}.npz".format(self.obj, "T_{:.0f}".format(fixed_T_dust),
+            np.savez_compressed(self.mnrfol + "{}_FIR_SED_parameters_{}{}{}.npz".format(self.obj_fn, "T_{:.0f}".format(fixed_T_dust),
                                 "_beta_{:.1f}".format(fixed_beta), "_l0_{:.0f}".format(l0) if l0 else ''), **rdict)
 
         handles = [matplotlib.patches.Rectangle(xy=(np.nan, np.nan), width=1, height=1, edgecolor="None", facecolor=dust_colors[di], alpha=0.8,
@@ -1725,7 +1744,7 @@ class FIR_SED_fit:
         if fig is None:
             fig = self.fig
         if obj_str is None:
-            obj_str = '_' + self.obj
+            obj_str = '_' + self.obj_fn
         
         fig.savefig(pltfol + "FIR_SED_{}{}".format(ptype, obj_str) + self.get_mstring(l0_list=l0_list) + self.pformat,
                     dpi=self.dpi, bbox_inches="tight")

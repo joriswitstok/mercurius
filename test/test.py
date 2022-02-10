@@ -10,14 +10,14 @@ import os, sys
 sys.path.append("..")
 from mercurius import FIR_SED_fit
 
-mcrfol = "MN_results/"
-if not os.path.exists(mcrfol):
-    os.makedirs(mcrfol)
+mnrfol = "MN_results/"
+if not os.path.exists(mnrfol):
+    os.makedirs(mnrfol)
 pltfol = "MN_plots/"
 if not os.path.exists(pltfol):
     os.makedirs(pltfol)
 
-f = FIR_SED_fit(l0_list=[None], analysis=True, mcrfol=mcrfol)
+f = FIR_SED_fit(l0_list=[None], analysis=True, mnrfol=mnrfol)
 f.set_data(obj="A1689-zD1", z=7.13,
             lambda_emit_vals=[1.33e3/(1.0+7.13), 0.873e3/(1.0+7.13), 0.728e3/(1.0+7.13), 0.427e3/(1.0+7.13)],
             S_nu_vals=[60e-6, 143e-6, 180e-6, 154e-6],

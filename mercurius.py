@@ -448,7 +448,8 @@ class FIR_SED_fit:
         """
 
         if self.verbose:
-            print("\nSetting photometric data points...")
+            print("\nSetting photometric data points and other properties of {}...".format(obj))
+        
         self.obj = obj
         self.obj_fn = self.obj.replace(' ', '_')
         self.z = z
@@ -492,7 +493,7 @@ class FIR_SED_fit:
                     *["{:.5g}\t\t{:.5g}\t\t{}\t\t{}\t\t{}".format(wl, f*self.fd_conv, 'N/A' if u else "{:.5g}".format(e*self.fd_conv), u, exc) \
                         for wl, f, e, u, exc in zip (self.lambda_emit_vals, self.S_nu_vals, self.S_nu_errs, self.cont_uplims, self.cont_excludes)], sep='\n')
         
-        self.valid_cont_area = cont_area is not None and np.isfinite(cont_area)
+        self.valid_cont_area = cont_area is not None and np.isfinite(cont_area) and cont_area > 0.0
         self.cont_area = cont_area
         self.cont_area_uplim = cont_area_uplim
         
@@ -504,7 +505,7 @@ class FIR_SED_fit:
     
     def fit_data(self, pltfol, fit_uplims=True, return_samples=False, lambda_emit=None,
                     n_live_points=400, evidence_tolerance=0.5, sampling_efficiency=0.8, max_iter=0,
-                    force_run=False, skip_redundant_calc=False, remove_mnfiles=False, mnverbose=False):
+                    force_run=False, skip_redundant_calc=False, remove_mnfiles=False, ann_size="small", mnverbose=False):
         """Function for fitting the photometric data of the object with greybody spectra for
         all opacity models set in `l0_list`.
 
@@ -540,6 +541,10 @@ class FIR_SED_fit:
             Entirely skip the data fitting (including the calculation of ) if results are already present?
         remove_mnfiles : bool, optional
             Remove files created by MultiNest after a run?
+        ann_size : float or {'xx-small', 'x-small', 'small', 'medium',
+                    'large', 'x-large', 'xx-large'}, optional
+            Argument used by `matplotlib.text.Text` for the font size of the annotation.
+            Default: `"small"`.
         mnverbose : bool, optional
             Controls whether the main output of the `pymultinest` solver is shown.
         
@@ -580,7 +585,7 @@ class FIR_SED_fit:
             n_dim = 3 - bool(self.fixed_beta)
 
             samples_fname = self.mnrfol + "{}_MN_FIR_SED_flat_samples_{}{}.npz".format(self.obj_fn, self.beta_str, l0_str)
-            if skip_redundant_calc and os.path.isfile(samples_fname):
+            if not force_run and skip_redundant_calc and os.path.isfile(samples_fname):
                 print("\nResults already present: skipping {:d}-dimensional MultiNest fit".format(n_dim),
                         "with {}{}".format("β = {:.1f}".format(self.fixed_beta) if self.fixed_beta else "varying β", l0_txt),
                         "for {}...".format(self.obj))
@@ -861,7 +866,7 @@ class FIR_SED_fit:
                                 xycoords=ax_c.get_xaxis_transform(), textcoords="offset points", rotation="vertical",
                                 va="top", ha="left", size="xx-small", alpha=0.8).set_bbox(dict(boxstyle="Round, pad=0.05", facecolor='w', edgecolor="None", alpha=0.8))
             
-            self.annotate_results(rdict, [axes_c[0, -1], axes_c[1, -1]], ax_type="corner")
+            self.annotate_results(rdict, [axes_c[0, -1], axes_c[1, -1]], ax_type="corner", ann_size=ann_size)
             cfig.savefig(pltfol + "Corner_MN_" + self.obj_fn + self.get_mstring(l0_list=[l0], inc_astr=False) + self.pformat,
                             dpi=self.dpi, bbox_inches="tight")
     
@@ -930,7 +935,8 @@ class FIR_SED_fit:
             print('')
     
     def plot_MN_fit(self, l0_list=None, fig=None, ax=None, pltfol=None, obj_str=None, single_plot=None,
-                    set_xrange=True, set_xlabel="both", set_ylabel=True, extra_yspace=True, rowi=0, coli=0):
+                    set_xrange=True, set_xlabel="both", set_ylabel=True, low_yspace_mult=0.05, up_yspace_mult=4,
+                    ann_size="small", show_T_peak=False, leg_framealpha=0, rowi=0, coli=0):
         """Function for plotting the results of a MultiNest fit.
 
         Parameters
@@ -962,9 +968,22 @@ class FIR_SED_fit:
             Default is `"both"`.
         set_ylabel : bool, optional
             Set labels on the flux density axis in this plot? Default is `True`.
-        extra_yspace : bool, optional
-            Create more space by decreasing the lower flux density bound in this plot? Default is
-            `True`.
+        low_yspace_mult : float, optional
+            Multiplier of the lower flux density bound to create more vertical space in this plot.
+            Default is `0.05`.
+        up_yspace_mult : float, optional
+            Multiplier of the upper flux density bound to create more vertical space in this plot.
+            Default is `4`.
+        ann_size : float or {'xx-small', 'x-small', 'small', 'medium',
+                    'large', 'x-large', 'xx-large'}, optional
+            Argument used by `matplotlib.text.Text` for the font size of the annotation.
+            Default: `"small"`.
+        show_T_peak : {`False`, `"all"`, `None`, `"self-consistent"`, float}, optional
+            Indicate the peak temperature on the plot for all (`"all"`) or only one specific opacity
+            model classifier (see `l0_list` for details)? Default is `False`, where it is not indicated.
+        leg_framealpha : float, optional
+            Alpha value used by `matplotlib` for the frame of the legend. Default is `None`, in which
+            case the value is taken from `plt.rcParams`.
         rowi : int, optional
             Row number of this plot in a multi-panel figure. Default is `0`.
         coli : int, optional
@@ -987,6 +1006,8 @@ class FIR_SED_fit:
             single_plot = not self.analysis
         if single_plot:
             handles = []
+        if leg_framealpha is None:
+            leg_framealpha = plt.rcParams["legend.framealpha"]
 
         for l0 in l0_list:
             if create_fig:
@@ -1026,6 +1047,18 @@ class FIR_SED_fit:
             ax.plot(lambda_emit, S_nu_obs*self.fd_conv, linewidth=1.5,
                     linestyle=self.l0_linestyles.get(l0, '-'), color=dcolor, alpha=0.8)
             
+            if show_T_peak and (show_T_peak == "all" or show_T_peak == l0):
+                peak_idx = np.argmax(rdict["S_nu_emit"])
+                prec = max(0, 2-math.floor(np.log10(100.0*min(rdict["T_dust_lowerr"], rdict["T_dust_uperr"]))))
+                
+                ax.annotate(text=r"$T_\mathrm{{ peak }} = {:.{prec}f}_{{ -{:.{prec}f} }}^{{ +{:.{prec}f} }} \, \mathrm{{ K }}$".format(rdict["T_peak_val"],
+                            rdict["T_peak_lowerr"], rdict["T_peak_uperr"], prec=prec) + \
+                                (r" (${} {:.{prec}f} \, \mathrm{{ K }}$)".format(r'>' if self.T_lolim else r'<', rdict["T_peak"], prec=prec) if self.T_lolim or self.T_uplim else r''),
+                            xy=(lambda_emit[peak_idx], S_nu_obs[peak_idx]*self.fd_conv), xytext=(0, -40), xycoords="data", textcoords="offset points",
+                            va="top", ha="center", size=ann_size, alpha=0.8,
+                            arrowprops={"arrowstyle": '-', "shrinkA": 0, "shrinkB": 0, "color": dcolor, "alpha": 0.8},
+                            zorder=6).set_bbox(dict(boxstyle="Round, pad=0.1", linestyle=self.l0_linestyles.get(l0, '-'), facecolor='w', edgecolor=dcolor, alpha=0.8))
+            
             ax.fill_between(lambda_emit, y1=y1*self.fd_conv, y2=y2*self.fd_conv, facecolor=dcolor, edgecolor="None", alpha=0.1)
             
             if np.min(y1[(lambda_emit >= max(20, self.l_min)) * (lambda_emit <= min(1e3, self.l_max))]) * self.fd_conv < self.F_nu_obs_min:
@@ -1041,7 +1074,7 @@ class FIR_SED_fit:
                     self.print_results(rdict, rtype="loaded")
 
             if self.analysis and not single_plot:
-                self.annotate_results(rdict, [ax, ax], ax_type="regular")
+                self.annotate_results(rdict, [ax, ax], ax_type="regular", ann_size=ann_size)
             else:
                 if l0 == "self-consistent":
                     l0_lab = l0.capitalize() + '\n' + r"$\lambda_0 = {:.1f}_{{ -{:.1f} }}^{{ +{:.1f} }} \, \mathrm{{ \mu m }}$".format(rdict["lambda_0"],
@@ -1070,27 +1103,30 @@ class FIR_SED_fit:
 
             if not single_plot:
                 self.plot_data()
-                self.set_axes(set_xrange=set_xrange, set_xlabel=set_xlabel, set_ylabel=set_ylabel, extra_yspace=extra_yspace, rowi=rowi, coli=coli)
+                self.set_axes(set_xrange=set_xrange, set_xlabel=set_xlabel, set_ylabel=set_ylabel,
+                                low_yspace_mult=low_yspace_mult, up_yspace_mult=up_yspace_mult, rowi=rowi, coli=coli)
                 if pltfol:
                     self.save_fig(pltfol=pltfol, ptype="MN_fit", l0_list=[l0])
         
         if single_plot:
             leg = ax.legend(handles=handles, handler_map={BTuple: BTupleHandler()}, ncol=len(self.l0_list), loc="lower center",
                             handlelength=0.7*plt.rcParams["legend.handlelength"], handleheight=5*plt.rcParams["legend.handleheight"],
-                            columnspacing=0.3*plt.rcParams["legend.columnspacing"])
+                            columnspacing=0.3*plt.rcParams["legend.columnspacing"], framealpha=leg_framealpha)
             
             # Show which beta_IRs have been used
             leg.set_title("MN fits of dust emission" + r", fixed $\beta_\mathrm{{ IR }} = {:.2g}$".format(self.fixed_beta) if self.fixed_beta else '',
                             prop={"size": "small"})
             
             self.plot_data()
-            self.set_axes(set_xrange=set_xrange, set_xlabel=set_xlabel, set_ylabel=set_ylabel, extra_yspace=extra_yspace, rowi=rowi, coli=coli)
+            self.set_axes(set_xrange=set_xrange, set_xlabel=set_xlabel, set_ylabel=set_ylabel,
+                            low_yspace_mult=low_yspace_mult, up_yspace_mult=up_yspace_mult, rowi=rowi, coli=coli)
             if pltfol:
                 self.save_fig(pltfol=pltfol, ptype="MN_fit", obj_str=obj_str)
     
     def plot_ranges(self, l0, T_dusts=T_dusts_global, beta_IRs=beta_IRs_global, fixed_T_dust=None, fixed_beta=None, lambda_emit=None,
                     save_results=True, fig=None, ax=None, pltfol=None, obj_str=None,
-                    annotate_results=True, set_xrange=True, set_xlabel="both", set_ylabel=True, extra_yspace=True, rowi=0, coli=0):
+                    annotate_results=True, set_xrange=True, set_xlabel="both", set_ylabel=True,
+                    low_yspace_mult=0.05, up_yspace_mult=4, rowi=0, coli=0):
         """Function for plotting a range of greybody spectra tuned to the photometric data.
 
         Notes
@@ -1153,9 +1189,12 @@ class FIR_SED_fit:
             Default is `"both"`.
         set_ylabel : bool, optional
             Set labels on the flux density axis in this plot? Default is `True`.
-        extra_yspace : bool, optional
-            Create more space by decreasing the lower flux density bound in this plot? Default is
-            `True`.
+        low_yspace_mult : float, optional
+            Multiplier of the lower flux density bound to create more vertical space in this plot.
+            Default is `0.05`.
+        up_yspace_mult : float, optional
+            Multiplier of the upper flux density bound to create more vertical space in this plot.
+            Default is `4`.
         rowi : int, optional
             Row number of this plot in a multi-panel figure. Default is `0`.
         coli : int, optional
@@ -1520,7 +1559,8 @@ class FIR_SED_fit:
                     print("\nincompatible with measurements!")
     
         self.plot_data()
-        self.set_axes(set_xrange=set_xrange, set_xlabel=set_xlabel, set_ylabel=set_ylabel, extra_yspace=extra_yspace, rowi=rowi, coli=coli)
+        self.set_axes(set_xrange=set_xrange, set_xlabel=set_xlabel, set_ylabel=set_ylabel,
+                        low_yspace_mult=low_yspace_mult, up_yspace_mult=up_yspace_mult, rowi=rowi, coli=coli)
         if pltfol:
             self.save_fig(pltfol=pltfol, ptype="ranges", obj_str=obj_str, l0_list=[l0])
     
@@ -1556,7 +1596,7 @@ class FIR_SED_fit:
 
         return prop_ann
     
-    def annotate_results(self, rdict, axes_ann, ax_type):
+    def annotate_results(self, rdict, axes_ann, ax_type, ann_size):
         """Function for annotating a figure with the main results of a greybody fit; designed for internal use.
 
         Parameters
@@ -1567,6 +1607,9 @@ class FIR_SED_fit:
             Sequence of two `matplotlib.axes.Axes` to be annotated.
         ax_type : {`"regular"`, `"corner"`}
             String indicating the type of figure being annotated.
+        ann_size : float or {'xx-small', 'x-small', 'small', 'medium',
+                    'large', 'x-large', 'xx-large'}
+            Argument used by `matplotlib.text.Text` for the font size of the annotation.
 
         """
 
@@ -1634,7 +1677,7 @@ class FIR_SED_fit:
             va = "top"
             ha = "right"
         ann = axes_ann[0].annotate(text=text, xy=xy, xytext=xytext, xycoords="axes fraction", textcoords="offset points",
-                                    va=va, ha=ha, color='k', size="small", alpha=0.8, zorder=6)
+                                    va=va, ha=ha, color='k', size=ann_size, alpha=0.8, zorder=6)
         ann.set_bbox(dict(boxstyle="Round, pad=0.05", facecolor='w', edgecolor="None", alpha=0.8))
         
         if self.fixed_beta:
@@ -1656,8 +1699,8 @@ class FIR_SED_fit:
                 '\n' + beta_str
         
         if ax_type == "regular":
-            ann = axes_ann[1].annotate(text=text, xy=(1, 0), xytext=(-8, 8), xycoords="axes fraction", textcoords="offset points", color='k', size="small",
-                                        va="bottom", ha="right", alpha=0.8, zorder=6)
+            ann = axes_ann[1].annotate(text=text, xy=(1, 0), xytext=(-8, 8), xycoords="axes fraction", textcoords="offset points",
+                                        va="bottom", ha="right", color='k', size=ann_size, alpha=0.8, zorder=6)
             ann.set_bbox(dict(boxstyle="Round, pad=0.05", facecolor='w', edgecolor="None", alpha=0.8))
         elif ax_type == "corner":
             ann.set_text(ann.get_text() + '\n' + text)
@@ -1676,7 +1719,7 @@ class FIR_SED_fit:
                 self.ax.errorbar(l, s_nu/self.uplim_nsig*self.fd_conv,
                                     marker='_', linestyle="None", color='k', alpha=0.4 if exclude else 0.8, zorder=5)
     
-    def set_axes(self, set_xrange, set_xlabel, set_ylabel, extra_yspace, rowi, coli):
+    def set_axes(self, set_xrange, set_xlabel, set_ylabel, low_yspace_mult, up_yspace_mult, rowi, coli):
         """Function for setting up the axes in an SED plot; designed for internal use.
 
         Parameters
@@ -1687,8 +1730,10 @@ class FIR_SED_fit:
             Set labels on the rest-frame (bottom) and/or observed (top) wavelength axes in this plot?
         set_ylabel : bool
             Set labels on the flux density axis in this plot?
-        extra_yspace : bool
-            Create more space by decreasing the lower flux density bound in this plot?
+        low_yspace_mult : float
+            Multiplier of the lower flux density bound to create more vertical space in this plot.
+        up_yspace_mult : float
+            Multiplier of the upper flux density bound to create more vertical space in this plot.
         rowi : int
             Row number of this plot in a multi-panel figure.
         coli : int
@@ -1708,7 +1753,7 @@ class FIR_SED_fit:
             self.ax.set_xlim(self.l_min, self.l_max)
         
         if np.isfinite(self.F_nu_obs_min) and np.isfinite(self.F_nu_obs_max):
-            self.ax.set_ylim((0.05 if extra_yspace else 0.1)*self.F_nu_obs_min, 4*self.F_nu_obs_max)
+            self.ax.set_ylim(low_yspace_mult*self.F_nu_obs_min, up_yspace_mult*self.F_nu_obs_max)
         
         if set_xlabel == "top" or set_xlabel == "both":
             l_obs_ax.set_xlabel(r"$\lambda_\mathrm{{ obs }} \, (\mathrm{mm})$")

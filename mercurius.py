@@ -59,7 +59,6 @@ M_sun_g = 1.989e33
 T_dusts_global = np.arange(20, 120, 10)
 beta_IRs_global = np.arange(1.5, 2.05, 0.1)
 
-dust_colors = sns.color_palette("inferno", len(T_dusts_global))
 dust_cmap = sns.color_palette("inferno", as_cmap=True)
 dust_norm = matplotlib.colors.Normalize(vmin=0, vmax=T_dusts_global[-1])
 
@@ -935,7 +934,7 @@ class FIR_SED_fit:
             print('')
     
     def plot_MN_fit(self, l0_list=None, fig=None, ax=None, pltfol=None, obj_str=None, single_plot=None,
-                    set_xrange=True, set_xlabel="both", set_ylabel=True, low_yspace_mult=0.05, up_yspace_mult=4,
+                    annotate_title=True, plot_data=True, add_top_axis="wl_obs", set_xrange=True, set_xlabel="both", set_ylabel=True, low_yspace_mult=0.05, up_yspace_mult=4,
                     ann_size="small", show_T_peak=False, leg_framealpha=0, rowi=0, coli=0):
         """Function for plotting the results of a MultiNest fit.
 
@@ -961,9 +960,16 @@ class FIR_SED_fit:
         single_plot : {`None`, bool}, optional
             Controls whether a single plot is made for different opacity models. Default is `None`,
             in which case a single plot will be made when `analysis` is `False`.
+        annotate_title : bool, optional
+            Annotate general information (e.g. name of the object and redshift)? Default is `True`.
+        plot_data : bool, optional
+            Show data points? Default is `True`.
+        add_top_axis : {`"wl_obs"`, `"nu_obs"`, `False`}, optional
+            Add second axis showing the observed wavelength (`"wl_obs"`) or frequency (`"nu_obs"`)
+            on the top x-axis? Default is to show observed wavelength.
         set_xrange : bool, optional
             Manually set bounds on the rest-frame wavelength axis in the plots? Default is `True`.
-        set_xlabel : {`"top"`, `"bottom"`, `"both"`}, optional
+        set_xlabel : {`"top"`, `"bottom"`, `"both"`, `False`}, optional
             Set labels on the rest-frame (bottom) and/or observed (top) wavelength axes in this plot?
             Default is `"both"`.
         set_ylabel : bool, optional
@@ -1020,7 +1026,8 @@ class FIR_SED_fit:
 
             self.fig, self.ax = fig, ax
 
-            self.annotate_title()
+            if annotate_title:
+                self.annotate_title()
             
             l0_str, l0_txt = self.get_l0string(l0)
 
@@ -1103,7 +1110,7 @@ class FIR_SED_fit:
 
             if not single_plot:
                 self.plot_data()
-                self.set_axes(set_xrange=set_xrange, set_xlabel=set_xlabel, set_ylabel=set_ylabel,
+                self.set_axes(add_top_axis=add_top_axis, set_xrange=set_xrange, set_xlabel=set_xlabel, set_ylabel=set_ylabel,
                                 low_yspace_mult=low_yspace_mult, up_yspace_mult=up_yspace_mult, rowi=rowi, coli=coli)
                 if pltfol:
                     self.save_fig(pltfol=pltfol, ptype="MN_fit", l0_list=[l0])
@@ -1117,15 +1124,17 @@ class FIR_SED_fit:
             leg.set_title("MN fits of dust emission" + r", fixed $\beta_\mathrm{{ IR }} = {:.2g}$".format(self.fixed_beta) if self.fixed_beta else '',
                             prop={"size": "small"})
             
-            self.plot_data()
-            self.set_axes(set_xrange=set_xrange, set_xlabel=set_xlabel, set_ylabel=set_ylabel,
+            if plot_data:
+                self.plot_data()
+            self.set_axes(add_top_axis=add_top_axis, set_xrange=set_xrange, set_xlabel=set_xlabel, set_ylabel=set_ylabel,
                             low_yspace_mult=low_yspace_mult, up_yspace_mult=up_yspace_mult, rowi=rowi, coli=coli)
             if pltfol:
                 self.save_fig(pltfol=pltfol, ptype="MN_fit", obj_str=obj_str)
     
     def plot_ranges(self, l0, T_dusts=T_dusts_global, beta_IRs=beta_IRs_global, fixed_T_dust=None, fixed_beta=None, lambda_emit=None,
                     save_results=True, fig=None, ax=None, pltfol=None, obj_str=None,
-                    annotate_results=True, set_xrange=True, set_xlabel="both", set_ylabel=True,
+                    annotate_title=True, annotate_results=True, show_legend=True,
+                    plot_data=True, add_top_axis="wl_obs", set_xrange=True, set_xlabel="both", set_ylabel=True,
                     low_yspace_mult=0.05, up_yspace_mult=4, rowi=0, coli=0):
         """Function for plotting a range of greybody spectra tuned to the photometric data.
 
@@ -1179,12 +1188,21 @@ class FIR_SED_fit:
         obj_str : {`None`, str}, optional
             String to be added to the filename of the figure. Default is `None`,
             in which case the object name, preceded by an underscore, will be used.
+        annotate_title : bool, optional
+            Annotate general information (e.g. name of the object and redshift)? Default is `True`.
         annotate_results : bool, optional
             Annotate the (range of) infrared luminosities found to be compatible for a given
             dust temperature? Default is `True`.
+        show_legend : bool, optional
+            Show legend with all dust temperatures plotted? Default is `True`.
+        plot_data : bool, optional
+            Show data points? Default is `True`.
+        add_top_axis : {`"wl_obs"`, `"nu_obs"`, `False`}, optional
+            Add second axis showing the observed wavelength (`"wl_obs"`) or frequency (`"nu_obs"`)
+            on the top x-axis? Default is to show observed wavelength.
         set_xrange : bool, optional
             Manually set bounds on the rest-frame wavelength axis in the plots? Default is `True`.
-        set_xlabel : {`"top"`, `"bottom"`, `"both"`}, optional
+        set_xlabel : {`"top"`, `"bottom"`, `"both"`, `False`}, optional
             Set labels on the rest-frame (bottom) and/or observed (top) wavelength axes in this plot?
             Default is `"both"`.
         set_ylabel : bool, optional
@@ -1228,7 +1246,8 @@ class FIR_SED_fit:
 
         SNR_ratios = [np.nan if exc else S/N for S, N, exc in zip(self.S_nu_vals, self.S_nu_errs, self.cont_excludes)]
 
-        prop_ann = self.annotate_title()
+        if annotate_title:
+            prop_ann = self.annotate_title()
 
         rdict = {}
         rdict["Sigma_dust"], rdict["Sigma_dust_lowerr"], rdict["Sigma_dust_uperr"] = np.nan, np.nan, np.nan
@@ -1264,6 +1283,8 @@ class FIR_SED_fit:
             T_peak_betas = []
 
             compatible_betas = []
+            
+            dcolor = dust_cmap(dust_norm(T_dust))
 
             for bi, beta_IR in enumerate(beta_IRs):
                 lambda_emit, S_nu_emit = calc_FIR_SED(z=self.z, beta_IR=beta_IR, T_dust=T_dust,
@@ -1278,11 +1299,11 @@ class FIR_SED_fit:
                 else:
                     if self.analysis and np.any(CMB_correction_factor < 0.9):
                         # Show where the correction is 90%
-                        ax.axvline(x=lambda_emit[np.argmin(np.abs(CMB_correction_factor - 0.9))], linestyle='--', color=dust_colors[di], alpha=0.8)
+                        ax.axvline(x=lambda_emit[np.argmin(np.abs(CMB_correction_factor - 0.9))], linestyle='--', color=dcolor, alpha=0.8)
                         if di == 2 and bi == 0:
                             ax.annotate(text="10% CMB background", xy=(lambda_emit[np.argmin(np.abs(CMB_correction_factor - 0.9))], 1), xytext=(-4, -4),
                                         xycoords=ax.get_xaxis_transform(), textcoords="offset points", rotation="vertical",
-                                        va="top", ha="right", size="x-small", color=dust_colors[di], alpha=0.8)
+                                        va="top", ha="right", size="x-small", color=dcolor, alpha=0.8)
 
                 S_nu_emit_CMB_att = S_nu_emit * CMB_correction_factor # Jy
                 
@@ -1432,9 +1453,10 @@ class FIR_SED_fit:
                                                 *rdict["SFR_IR_err"])]
                     
                     if compatible_beta:
-                        prop_ann.set_text(prop_ann.get_text() + "\n\nFor " + r"$T_\mathrm{{ dust }} = {:.0f} \, \mathrm{{ K }}$, ".format(fixed_T_dust) + \
-                                            r"$\beta_\mathrm{{ IR }} = {:.2g}$:".format(fixed_beta) + '\n' + \
-                                            '\n'.join(IR_ann_list))
+                        if annotate_title:
+                            prop_ann.set_text(prop_ann.get_text() + "\n\nFor " + r"$T_\mathrm{{ dust }} = {:.0f} \, \mathrm{{ K }}$, ".format(fixed_T_dust) + \
+                                                r"$\beta_\mathrm{{ IR }} = {:.2g}$:".format(fixed_beta) + '\n' + \
+                                                '\n'.join(IR_ann_list))
                     else:
                         for key in rdict.keys():
                             if not "uplim" in key:
@@ -1461,30 +1483,30 @@ class FIR_SED_fit:
                     T_peak_minmax[1] = np.max(T_peak_betas[low_beta_idx:high_beta_idx+1])
 
                 # Plot the observed spectrum (intrinsic spectrum is nearly the same apart from at the very red wavelengths above ~100 micron)
-                # ax.plot(lambda_emit, S_nu_emit, linestyle='--', color=dust_colors[di], alpha=0.8)
-                ax.plot(lambda_emit_betas[low_beta_idx], S_nu_obs_betas[low_beta_idx], linewidth=1.5, color=dust_colors[di], alpha=0.8)
-                ax.plot(lambda_emit_betas[high_beta_idx], S_nu_obs_betas[high_beta_idx], linewidth=1.5, color=dust_colors[di], alpha=0.8)
+                # ax.plot(lambda_emit, S_nu_emit, linestyle='--', color=dcolor, alpha=0.8)
+                ax.plot(lambda_emit_betas[low_beta_idx], S_nu_obs_betas[low_beta_idx], linewidth=1.5, color=dcolor, alpha=0.8)
+                ax.plot(lambda_emit_betas[high_beta_idx], S_nu_obs_betas[high_beta_idx], linewidth=1.5, color=dcolor, alpha=0.8)
 
                 # Also fill in area in between curves of minimum/maximum beta_IR that is compatible
                 assert np.all([l == lambda_emit_betas[0] for l in lambda_emit_betas])
                 ax.fill_between(lambda_emit_betas[0], y1=S_nu_obs_betas[low_beta_idx], y2=S_nu_obs_betas[high_beta_idx],
-                                facecolor=dust_colors[di], edgecolor="None", alpha=0.2)
+                                facecolor=dcolor, edgecolor="None", alpha=0.2)
             
             if not any_compatible_betas:
                 if lambda_emit_betas and S_nu_obs_betas:
-                    ax.plot(lambda_emit_betas[0], S_nu_obs_betas[0], linestyle='--', linewidth=1.0, color=dust_colors[di], alpha=0.5)
-                    ax.plot(lambda_emit_betas[-1], S_nu_obs_betas[-1], linestyle='--', linewidth=1.0, color=dust_colors[di], alpha=0.5)
+                    ax.plot(lambda_emit_betas[0], S_nu_obs_betas[0], linestyle='--', linewidth=1.0, color=dcolor, alpha=0.5)
+                    ax.plot(lambda_emit_betas[-1], S_nu_obs_betas[-1], linestyle='--', linewidth=1.0, color=dcolor, alpha=0.5)
                     ax.fill_between(lambda_emit_betas[0], y1=S_nu_obs_betas[0], y2=S_nu_obs_betas[-1],
-                                    facecolor=dust_colors[di], edgecolor="None", alpha=0.05)
+                                    facecolor=dcolor, edgecolor="None", alpha=0.05)
             elif not all_compatible_betas:
                 if not compatible_betas[0]:
-                    ax.plot(lambda_emit_betas[0], S_nu_obs_betas[0], linestyle='--', linewidth=1.0, color=dust_colors[di], alpha=0.5)
+                    ax.plot(lambda_emit_betas[0], S_nu_obs_betas[0], linestyle='--', linewidth=1.0, color=dcolor, alpha=0.5)
                     ax.fill_between(lambda_emit_betas[0], y1=S_nu_obs_betas[0], y2=S_nu_obs_betas[low_beta_idx],
-                                    facecolor=dust_colors[di], edgecolor="None", alpha=0.05)
+                                    facecolor=dcolor, edgecolor="None", alpha=0.05)
                 if not compatible_betas[-1]:
-                    ax.plot(lambda_emit_betas[-1], S_nu_obs_betas[-1], linestyle='--', linewidth=1.0, color=dust_colors[di], alpha=0.5)
+                    ax.plot(lambda_emit_betas[-1], S_nu_obs_betas[-1], linestyle='--', linewidth=1.0, color=dcolor, alpha=0.5)
                     ax.fill_between(lambda_emit_betas[0], y1=S_nu_obs_betas[high_beta_idx], y2=S_nu_obs_betas[-1],
-                                    facecolor=dust_colors[di], edgecolor="None", alpha=0.05)
+                                    facecolor=dcolor, edgecolor="None", alpha=0.05)
 
             if any_compatible_betas and annotate_results:
                 # Annotate results of L_IR
@@ -1503,7 +1525,7 @@ class FIR_SED_fit:
                 # Save text for later annotation and update position of all previous annotations
                 for cb_ann_text_offset_colour in cb_ann_text_offset_colours:
                     cb_ann_text_offset_colour[1] += 1 + int(not all_compatible_betas)
-                cb_ann_text_offset_colours.append([text, 0, dust_colors[di]])
+                cb_ann_text_offset_colours.append([text, 0, dcolor])
 
         for cb_ann_text_offset_colour in cb_ann_text_offset_colours:
             ax.annotate(text=cb_ann_text_offset_colour[0], xy=(0.025, 0.025), xytext=(0, 16*cb_ann_text_offset_colour[1]),
@@ -1519,17 +1541,18 @@ class FIR_SED_fit:
             np.savez_compressed(self.mnrfol + "{}_FIR_SED_parameters_{}{}{}.npz".format(self.obj_fn, "T_{:.0f}".format(fixed_T_dust),
                                 "_beta_{:.1f}".format(fixed_beta), "_l0_{:.0f}".format(l0) if l0 else ''), **rdict)
 
-        handles = [matplotlib.patches.Rectangle(xy=(np.nan, np.nan), width=1, height=1, edgecolor="None", facecolor=dust_colors[di], alpha=0.8,
-                    label=r"$T_\mathrm{{ dust }} = {:.0f} \, \mathrm{{ K }}$".format(T_dust)) for di, T_dust in enumerate(T_dusts) if T_dust in T_dust_handles]
-        
-        leg = ax.legend(handles=handles, ncol=2, loc="lower right", frameon=True, framealpha=0.8, fontsize="small")
-        
-        # Show which beta_IRs have been used
-        if l0 == "self-consistent":
-            l0_lab = l0.capitalize() + " opacity, "
-        else:
-            l0_lab = "Dust emission with fixed " + r"$\lambda_0 = {:.0f} \, \mathrm{{ \mu m }}$, ".format(l0) if l0 else "Optically thin dust emission, "
-        leg.set_title(l0_lab + r"$\beta_\mathrm{{ IR }} \in [{:.2g}$, ${:.2g}]$".format(beta_IRs[0], beta_IRs[-1]), prop={"size": "small"})
+        if show_legend:
+            handles = [matplotlib.patches.Rectangle(xy=(np.nan, np.nan), width=1, height=1, edgecolor="None", facecolor=dcolor, alpha=0.8,
+                        label=r"$T_\mathrm{{ dust }} = {:.0f} \, \mathrm{{ K }}$".format(T_dust)) for di, T_dust in enumerate(T_dusts) if T_dust in T_dust_handles]
+            
+            leg = ax.legend(handles=handles, ncol=2, loc="lower right", frameon=True, framealpha=0.8, fontsize="small")
+            
+            # Show which beta_IRs have been used
+            if l0 == "self-consistent":
+                l0_lab = l0.capitalize() + " opacity, "
+            else:
+                l0_lab = "Dust emission with fixed " + r"$\lambda_0 = {:.0f} \, \mathrm{{ \mu m }}$, ".format(l0) if l0 else "Optically thin dust emission, "
+            leg.set_title(l0_lab + r"$\beta_\mathrm{{ IR }} \in [{:.2g}$, ${:.2g}]$".format(beta_IRs[0], beta_IRs[-1]), prop={"size": "small"})
         
         if self.verbose:
             print("T_dust: {:.1f}-{:.1f} K".format(T_dusts[0], T_dusts[-1]))
@@ -1558,8 +1581,9 @@ class FIR_SED_fit:
                 else:
                     print("\nincompatible with measurements!")
     
-        self.plot_data()
-        self.set_axes(set_xrange=set_xrange, set_xlabel=set_xlabel, set_ylabel=set_ylabel,
+        if plot_data:
+            self.plot_data()
+        self.set_axes(add_top_axis=add_top_axis, set_xrange=set_xrange, set_xlabel=set_xlabel, set_ylabel=set_ylabel,
                         low_yspace_mult=low_yspace_mult, up_yspace_mult=up_yspace_mult, rowi=rowi, coli=coli)
         if pltfol:
             self.save_fig(pltfol=pltfol, ptype="ranges", obj_str=obj_str, l0_list=[l0])
@@ -1719,14 +1743,17 @@ class FIR_SED_fit:
                 self.ax.errorbar(l, s_nu/self.uplim_nsig*self.fd_conv,
                                     marker='_', linestyle="None", color='k', alpha=0.4 if exclude else 0.8, zorder=5)
     
-    def set_axes(self, set_xrange, set_xlabel, set_ylabel, low_yspace_mult, up_yspace_mult, rowi, coli):
+    def set_axes(self, add_top_axis, set_xrange, set_xlabel, set_ylabel, low_yspace_mult, up_yspace_mult, rowi, coli):
         """Function for setting up the axes in an SED plot; designed for internal use.
 
         Parameters
         ----------
+        add_top_axis : {`"wl_obs"`, `"nu_obs"`, `False`}
+            Add second axis showing the observed wavelength (`"wl_obs"`) or frequency (`"nu_obs"`)
+            on the top x-axis?
         set_xrange : bool
             Manually set bounds on the rest-frame wavelength axis in the plots?
-        set_xlabel : {`"top"`, `"bottom"`, `"both"`}
+        set_xlabel : {`"top"`, `"bottom"`, `"both"`, `False`}
             Set labels on the rest-frame (bottom) and/or observed (top) wavelength axes in this plot?
         set_ylabel : bool
             Set labels on the flux density axis in this plot?
@@ -1741,10 +1768,16 @@ class FIR_SED_fit:
 
         """
 
-        lfunc = lcoord_funcs(rowi=rowi, coli=coli, z=self.z)
-        l_obs_ax = self.ax.secondary_xaxis("top", functions=(lfunc.rf2obs, lfunc.obs2rf))
-        l_obs_ax.tick_params(axis='x', which="both", bottom=False, top=True, labelbottom=False, labeltop=True)
-        self.ax.tick_params(axis="both", which="both", top=False, labelleft=True, labelbottom=True)
+        if add_top_axis == "wl_obs":
+            lfunc = lcoord_funcs(rowi=rowi, coli=coli, z=self.z)
+            top_ax = self.ax.secondary_xaxis("top", functions=(lfunc.rf2obs, lfunc.obs2rf))
+            top_ax.tick_params(axis='x', which="both", bottom=False, top=True, labelbottom=False, labeltop=True)
+            self.ax.tick_params(axis="both", which="both", top=False, labelleft=True, labelbottom=True)
+        elif add_top_axis == "nu_obs":
+            lfunc = lcoord_funcs(rowi=rowi, coli=coli, z=self.z)
+            top_ax = self.ax.secondary_xaxis("top", functions=(lambda l_emit: 299.792458/lfunc.rf2obs(l_emit), lambda nu_obs: lfunc.obs2rf(299.792458/nu_obs)))
+            top_ax.tick_params(axis='x', which="both", bottom=False, top=True, labelbottom=False, labeltop=True)
+            self.ax.tick_params(axis="both", which="both", top=False, labelleft=True, labelbottom=True)
 
         self.ax.set_xscale("log")
         self.ax.set_yscale("log")
@@ -1756,7 +1789,11 @@ class FIR_SED_fit:
             self.ax.set_ylim(low_yspace_mult*self.F_nu_obs_min, up_yspace_mult*self.F_nu_obs_max)
         
         if set_xlabel == "top" or set_xlabel == "both":
-            l_obs_ax.set_xlabel(r"$\lambda_\mathrm{{ obs }} \, (\mathrm{mm})$")
+            assert add_top_axis in ["wl_obs", "nu_obs"]
+            if add_top_axis == "wl_obs":
+                top_ax.set_xlabel(r"$\lambda_\mathrm{{ obs }} \, (\mathrm{mm})$")
+            elif add_top_axis == "nu_obs":
+                top_ax.set_xlabel(r"$\nu_\mathrm{{ obs }} \, (\mathrm{GHz})$")
         if set_xlabel == "bottom" or set_xlabel == "both":
             self.ax.set_xlabel(r"$\lambda_\mathrm{{ emit }} \, (\mathrm{\mu m})$")
         if set_ylabel:

@@ -1,4 +1,7 @@
 # MERCURIUS
+<br>
+<img src="/aux/MERCURIUS.png" width="800">
+<br>
 
 ## Contents
 1. [Description](#Description)

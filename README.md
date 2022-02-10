@@ -1,6 +1,6 @@
 # MERCURIUS
 <br>
-<img src="/aux/MERCURIUS.png" width="90%">
+<img src="/aux/MERCURIUS.png" width="100%">
 <br>
 
 ## Contents

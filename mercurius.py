@@ -51,6 +51,9 @@ wl_star = wl_CII
 nu_star = nu_CII # Hz
 k_nu_star = 8.94 # cm^2/g (other values range from ~5 to ~30)
 
+# Prior range on the dust emissivity, beta
+beta_range = [1, 5]
+
 # Solar luminosity in erg/s
 L_sun_ergs = 3.828e26 * 1e7
 # Solar mass in g
@@ -97,10 +100,24 @@ class lcoord_funcs:
         
         self.z = z
     
-    def rf2obs(self, l_emit):
+    def lamrf2lamobs(self, l_emit):
+        # From micron to mm
         return l_emit / 1e3 * (1.0 + self.z)
-    def obs2rf(self, l_obs):
+    def lamobs2lamrf(self, l_obs):
+        # From mm to micron
         return l_obs * 1e3 / (1.0 + self.z)
+    def lamrf2nuobs(self, l_emit):
+        # From micron to GHz
+        return 299792.458 / l_emit / (1.0 + self.z)
+    def nuobs2lamrf(self, nu_obs):
+        # From GHz to micron
+        return 299792.458 / nu_obs * (1.0 + self.z)
+    def nuobs2lamobs(self, nu_obs):
+        # From GHz to mm
+        return 299.792458 / nu_obs
+    def lamobs2nuobs(self, l_obs):
+        # From mm to GHz
+        return 299.792458 / l_obs
 
 def FIR_SED_spectrum(theta, z, D_L, l0_dict, lambda_emit=None):
     logM_dust = theta[0]
@@ -216,8 +233,6 @@ class MN_FIR_SED_solver(Solver):
 
         self.cube_range = [logM_dust_range, T_dust_range]
         if not self.fixed_beta:
-            beta_range = [1, 5]
-        
             self.cube_range.append(beta_range)
         
         self.cube_range = np.array(self.cube_range)
@@ -805,7 +820,7 @@ class FIR_SED_fit:
                 data.append(beta_samples)
                 del beta_samples
                 bins.append(100)
-                ranges.append(0.9)
+                ranges.append(beta_range)
                 labels.append(r"$\beta_\mathrm{IR}$")
             
             cfig = corner.corner(np.transpose(data), labels=labels, bins=bins, range=ranges,
@@ -878,18 +893,20 @@ class FIR_SED_fit:
                                 data=data, names=names)
             self.fresh_calculation[l0] = True
             if self.verbose:
-                self.print_results(rdict, rtype="calculated")
+                self.print_results(rdict, l0_txt, rtype="calculated")
             
             if return_samples:
                 return (data, names)
     
-    def print_results(self, rdict, rtype):
+    def print_results(self, rdict, l0_txt, rtype):
         """Function for printing the results; designed for internal use.
 
         Parameters
         ----------
         rdict : dict
             Dictionary containing the main MultiNest results.
+        l0_txt : str
+            A string containing a description of the opacity model classifier.
         rtype : str
             Type of estimates.
 
@@ -899,7 +916,8 @@ class FIR_SED_fit:
         L_IR_log10 = int(np.log10(rdict["L_IR_Lsun"]))
         L_FIR_log10 = int(np.log10(rdict["L_FIR_Lsun"]))
 
-        print("\nFreshly {} MultiNest estimates of {}:".format(rtype, self.obj))
+        print("\nFreshly {} MultiNest estimates of {}".format(rtype, self.obj))
+        print("(with {}{}):".format("β = {:.1f}".format(self.fixed_beta) if self.fixed_beta else "varying β", l0_txt))
         print("M_dust = ({:.1f} -{:.1f} +{:.1f}) x 10^{:d} M_sun".format(rdict["M_dust"]/10**M_dust_log10,
                     rdict["M_dust_lowerr"]/10**M_dust_log10, rdict["M_dust_uperr"]/10**M_dust_log10, M_dust_log10))
         print("L_IR = ({:.1f} -{:.1f} +{:.1f}) x 10^{:d} L_sun".format(rdict["L_IR_Lsun"]/10**L_IR_log10,
@@ -924,9 +942,9 @@ class FIR_SED_fit:
         print('')
         
         if not np.isnan(self.obj_M):
-            fmt = ".1f" if 100.0*rdict["dust_frac"] > 1 else ".2g"
-            print("Dust-to-stellar mass fraction: {:{fmt}} -{:{fmt}} +{:{fmt}} per cent".format(100.0*rdict["dust_frac"],
-                                                100.0*rdict["dust_frac_lowerr"], 100.0*rdict["dust_frac_uperr"], fmt=fmt))
+            fmt = ".2f" if rdict["dust_frac"] > 0.01 else ".2g"
+            print("Dust-to-stellar mass fraction: {:{fmt}} -{:{fmt}} +{:{fmt}}".format(rdict["dust_frac"],
+                                                rdict["dust_frac_lowerr"], rdict["dust_frac_uperr"], fmt=fmt))
             print("Dust yield (AGB): {:{fmt}} -{:{fmt}} +{:{fmt}} M_sun".format(rdict["dust_yield_AGB"],
                                                 rdict["dust_yield_AGB_lowerr"], rdict["dust_yield_AGB_uperr"], fmt=fmt))
             print("Dust yield (SN): {:{fmt}} -{:{fmt}} +{:{fmt}} M_sun".format(rdict["dust_yield_SN"],
@@ -934,7 +952,8 @@ class FIR_SED_fit:
             print('')
     
     def plot_MN_fit(self, l0_list=None, fig=None, ax=None, pltfol=None, obj_str=None, single_plot=None,
-                    annotate_title=True, plot_data=True, add_top_axis="wl_obs", set_xrange=True, set_xlabel="both", set_ylabel=True, low_yspace_mult=0.05, up_yspace_mult=4,
+                    annotate_title=True, plot_data=True, bot_axis="wl_emit", add_top_axis="wl_obs",
+                    set_xrange=True, set_xlabel="both", set_ylabel=True, low_yspace_mult=0.05, up_yspace_mult=4,
                     ann_size="small", show_T_peak=False, leg_framealpha=0, rowi=0, coli=0):
         """Function for plotting the results of a MultiNest fit.
 
@@ -964,6 +983,9 @@ class FIR_SED_fit:
             Annotate general information (e.g. name of the object and redshift)? Default is `True`.
         plot_data : bool, optional
             Show data points? Default is `True`.
+        bot_axis : {`"wl_emit"`, `"nu_obs"`}, optional
+            Choice for the main x-axis to show the rest-frame wavelength (`"wl_emit"`) or observed
+            frequency (`"nu_obs"`). Default is to show rest-frame wavelength.
         add_top_axis : {`"wl_obs"`, `"nu_obs"`, `False`}, optional
             Add second axis showing the observed wavelength (`"wl_obs"`) or frequency (`"nu_obs"`)
             on the top x-axis? Default is to show observed wavelength.
@@ -1019,6 +1041,8 @@ class FIR_SED_fit:
             if create_fig:
                 # Prepare figure for plotting FIR SED
                 fig, ax = plt.subplots()
+                if single_plot:
+                    create_fig = False
             elif fig is None:
                 fig = ax.get_figure()
             elif ax is None:
@@ -1045,13 +1069,18 @@ class FIR_SED_fit:
             dcolor = dust_cmap(dust_norm(T_dust))
             
             lambda_emit = rdict["lambda_emit"]
+            if bot_axis == "wl_emit":
+                x = lambda_emit
+            elif bot_axis == "nu_obs":
+                nu_obs = 299792.458 / lambda_emit / (1.0 + self.z) # GHz (lambda_emit is in micron)
+                x = nu_obs
             S_nu_obs = rdict["S_nu_obs"]
 
             y1 = rdict["y1"]
             y2 = rdict["y2"]
             
             # Plot the observed spectrum (intrinsic spectrum is nearly the same apart from at the very red wavelengths above ~100 micron)
-            ax.plot(lambda_emit, S_nu_obs*self.fd_conv, linewidth=1.5,
+            ax.plot(x, S_nu_obs*self.fd_conv, linewidth=1.5,
                     linestyle=self.l0_linestyles.get(l0, '-'), color=dcolor, alpha=0.8)
             
             if show_T_peak and (show_T_peak == "all" or show_T_peak == l0):
@@ -1061,12 +1090,12 @@ class FIR_SED_fit:
                 ax.annotate(text=r"$T_\mathrm{{ peak }} = {:.{prec}f}_{{ -{:.{prec}f} }}^{{ +{:.{prec}f} }} \, \mathrm{{ K }}$".format(rdict["T_peak_val"],
                             rdict["T_peak_lowerr"], rdict["T_peak_uperr"], prec=prec) + \
                                 (r" (${} {:.{prec}f} \, \mathrm{{ K }}$)".format(r'>' if self.T_lolim else r'<', rdict["T_peak"], prec=prec) if self.T_lolim or self.T_uplim else r''),
-                            xy=(lambda_emit[peak_idx], S_nu_obs[peak_idx]*self.fd_conv), xytext=(0, -40), xycoords="data", textcoords="offset points",
+                            xy=(x[peak_idx], S_nu_obs[peak_idx]*self.fd_conv), xytext=(0, -40), xycoords="data", textcoords="offset points",
                             va="top", ha="center", size=ann_size, alpha=0.8,
                             arrowprops={"arrowstyle": '-', "shrinkA": 0, "shrinkB": 0, "color": dcolor, "alpha": 0.8},
                             zorder=6).set_bbox(dict(boxstyle="Round, pad=0.1", linestyle=self.l0_linestyles.get(l0, '-'), facecolor='w', edgecolor=dcolor, alpha=0.8))
             
-            ax.fill_between(lambda_emit, y1=y1*self.fd_conv, y2=y2*self.fd_conv, facecolor=dcolor, edgecolor="None", alpha=0.1)
+            ax.fill_between(x, y1=y1*self.fd_conv, y2=y2*self.fd_conv, facecolor=dcolor, edgecolor="None", alpha=0.1)
             
             if np.min(y1[(lambda_emit >= max(20, self.l_min)) * (lambda_emit <= min(1e3, self.l_max))]) * self.fd_conv < self.F_nu_obs_min:
                 self.F_nu_obs_min = np.nanmin(y1[(lambda_emit >= max(20, self.l_min)) * (lambda_emit <= min(1e3, self.l_max))]) * self.fd_conv
@@ -1078,7 +1107,7 @@ class FIR_SED_fit:
             
             if not self.fresh_calculation[l0]:
                 if self.verbose:
-                    self.print_results(rdict, rtype="loaded")
+                    self.print_results(rdict, l0_txt, rtype="loaded")
 
             if self.analysis and not single_plot:
                 self.annotate_results(rdict, [ax, ax], ax_type="regular", ann_size=ann_size)
@@ -1109,11 +1138,11 @@ class FIR_SED_fit:
                     handles.append(BTuple(([dcolor], [0.1], 1.5, self.l0_linestyles.get(l0, '-'), dcolor, 0.8), label + '\n'))
 
             if not single_plot:
-                self.plot_data()
-                self.set_axes(add_top_axis=add_top_axis, set_xrange=set_xrange, set_xlabel=set_xlabel, set_ylabel=set_ylabel,
+                self.plot_data(bot_axis=bot_axis)
+                self.set_axes(bot_axis=bot_axis, add_top_axis=add_top_axis, set_xrange=set_xrange, set_xlabel=set_xlabel, set_ylabel=set_ylabel,
                                 low_yspace_mult=low_yspace_mult, up_yspace_mult=up_yspace_mult, rowi=rowi, coli=coli)
                 if pltfol:
-                    self.save_fig(pltfol=pltfol, ptype="MN_fit", l0_list=[l0])
+                    self.save_fig(pltfol=pltfol, ptype="MN_fit", l0_list=[l0], single_plot=single_plot)
         
         if single_plot:
             leg = ax.legend(handles=handles, handler_map={BTuple: BTupleHandler()}, ncol=len(self.l0_list), loc="lower center",
@@ -1125,16 +1154,16 @@ class FIR_SED_fit:
                             prop={"size": "small"})
             
             if plot_data:
-                self.plot_data()
-            self.set_axes(add_top_axis=add_top_axis, set_xrange=set_xrange, set_xlabel=set_xlabel, set_ylabel=set_ylabel,
+                self.plot_data(bot_axis=bot_axis)
+            self.set_axes(bot_axis=bot_axis, add_top_axis=add_top_axis, set_xrange=set_xrange, set_xlabel=set_xlabel, set_ylabel=set_ylabel,
                             low_yspace_mult=low_yspace_mult, up_yspace_mult=up_yspace_mult, rowi=rowi, coli=coli)
             if pltfol:
-                self.save_fig(pltfol=pltfol, ptype="MN_fit", obj_str=obj_str)
+                self.save_fig(pltfol=pltfol, ptype="MN_fit", l0_list=l0_list, obj_str=obj_str, single_plot=single_plot)
     
     def plot_ranges(self, l0, T_dusts=T_dusts_global, beta_IRs=beta_IRs_global, fixed_T_dust=None, fixed_beta=None, lambda_emit=None,
                     save_results=True, fig=None, ax=None, pltfol=None, obj_str=None,
                     annotate_title=True, annotate_results=True, show_legend=True,
-                    plot_data=True, add_top_axis="wl_obs", set_xrange=True, set_xlabel="both", set_ylabel=True,
+                    plot_data=True, bot_axis="wl_emit", add_top_axis="wl_obs", set_xrange=True, set_xlabel="both", set_ylabel=True,
                     low_yspace_mult=0.05, up_yspace_mult=4, rowi=0, coli=0):
         """Function for plotting a range of greybody spectra tuned to the photometric data.
 
@@ -1197,6 +1226,9 @@ class FIR_SED_fit:
             Show legend with all dust temperatures plotted? Default is `True`.
         plot_data : bool, optional
             Show data points? Default is `True`.
+        bot_axis : {`"wl_emit"`, `"nu_obs"`}, optional
+            Choice for the main x-axis to show the rest-frame wavelength (`"wl_emit"`) or observed
+            frequency (`"nu_obs"`). Default is to show rest-frame wavelength.
         add_top_axis : {`"wl_obs"`, `"nu_obs"`, `False`}, optional
             Add second axis showing the observed wavelength (`"wl_obs"`) or frequency (`"nu_obs"`)
             on the top x-axis? Default is to show observed wavelength.
@@ -1276,7 +1308,7 @@ class FIR_SED_fit:
             if T_dust < T_CMB_obs*(1.0+self.z):
                 continue
 
-            lambda_emit_betas = []
+            x_betas = []
             S_nu_obs_betas = []
             L_IR_Lsun_betas = []
             L_FIR_Lsun_betas = []
@@ -1290,6 +1322,11 @@ class FIR_SED_fit:
                 lambda_emit, S_nu_emit = calc_FIR_SED(z=self.z, beta_IR=beta_IR, T_dust=T_dust,
                                                         optically_thick_lambda_0=l0, return_spectrum=True, lambda_emit=lambda_emit)
                 nu_emit = 299792458.0 * 1e6 / lambda_emit # Hz (lambda is in micron)
+                if bot_axis == "wl_emit":
+                    x = lambda_emit
+                elif bot_axis == "nu_obs":
+                    nu_obs = nu_emit / 1e9 / (1.0 + self.z) # GHz (nu_emit is in Hz)
+                    x = nu_obs
                 
                 # Flux density needs to be corrected for observing against the the CMB (NB: can be negative if T_dust < T_CMB), and then normalised
                 CMB_correction_factor = CMB_correction(z=self.z, nu0_emit=nu_emit, T_dust=T_dust)
@@ -1299,9 +1336,9 @@ class FIR_SED_fit:
                 else:
                     if self.analysis and np.any(CMB_correction_factor < 0.9):
                         # Show where the correction is 90%
-                        ax.axvline(x=lambda_emit[np.argmin(np.abs(CMB_correction_factor - 0.9))], linestyle='--', color=dcolor, alpha=0.8)
+                        ax.axvline(x=x[np.argmin(np.abs(CMB_correction_factor - 0.9))], linestyle='--', color=dcolor, alpha=0.8)
                         if di == 2 and bi == 0:
-                            ax.annotate(text="10% CMB background", xy=(lambda_emit[np.argmin(np.abs(CMB_correction_factor - 0.9))], 1), xytext=(-4, -4),
+                            ax.annotate(text="10% CMB background", xy=(x[np.argmin(np.abs(CMB_correction_factor - 0.9))], 1), xytext=(-4, -4),
                                         xycoords=ax.get_xaxis_transform(), textcoords="offset points", rotation="vertical",
                                         va="top", ha="right", size="x-small", color=dcolor, alpha=0.8)
 
@@ -1463,7 +1500,7 @@ class FIR_SED_fit:
                                 rdict[key] = np.nan
 
                 T_dust_handles.append(T_dust)
-                lambda_emit_betas.append(lambda_emit)
+                x_betas.append(x)
                 S_nu_obs_betas.append(S_nu_obs)
                 L_IR_Lsun_betas.append(L_IR_Lsun)
                 L_FIR_Lsun_betas.append(L_FIR_Lsun)
@@ -1484,28 +1521,28 @@ class FIR_SED_fit:
 
                 # Plot the observed spectrum (intrinsic spectrum is nearly the same apart from at the very red wavelengths above ~100 micron)
                 # ax.plot(lambda_emit, S_nu_emit, linestyle='--', color=dcolor, alpha=0.8)
-                ax.plot(lambda_emit_betas[low_beta_idx], S_nu_obs_betas[low_beta_idx], linewidth=1.5, color=dcolor, alpha=0.8)
-                ax.plot(lambda_emit_betas[high_beta_idx], S_nu_obs_betas[high_beta_idx], linewidth=1.5, color=dcolor, alpha=0.8)
+                ax.plot(x_betas[low_beta_idx], S_nu_obs_betas[low_beta_idx], linewidth=1.5, color=dcolor, alpha=0.8)
+                ax.plot(x_betas[high_beta_idx], S_nu_obs_betas[high_beta_idx], linewidth=1.5, color=dcolor, alpha=0.8)
 
                 # Also fill in area in between curves of minimum/maximum beta_IR that is compatible
-                assert np.all([l == lambda_emit_betas[0] for l in lambda_emit_betas])
-                ax.fill_between(lambda_emit_betas[0], y1=S_nu_obs_betas[low_beta_idx], y2=S_nu_obs_betas[high_beta_idx],
+                assert np.all([x == x_betas[0] for l in x_betas])
+                ax.fill_between(x_betas[0], y1=S_nu_obs_betas[low_beta_idx], y2=S_nu_obs_betas[high_beta_idx],
                                 facecolor=dcolor, edgecolor="None", alpha=0.2)
             
             if not any_compatible_betas:
-                if lambda_emit_betas and S_nu_obs_betas:
-                    ax.plot(lambda_emit_betas[0], S_nu_obs_betas[0], linestyle='--', linewidth=1.0, color=dcolor, alpha=0.5)
-                    ax.plot(lambda_emit_betas[-1], S_nu_obs_betas[-1], linestyle='--', linewidth=1.0, color=dcolor, alpha=0.5)
-                    ax.fill_between(lambda_emit_betas[0], y1=S_nu_obs_betas[0], y2=S_nu_obs_betas[-1],
+                if x_betas and S_nu_obs_betas:
+                    ax.plot(x_betas[0], S_nu_obs_betas[0], linestyle='--', linewidth=1.0, color=dcolor, alpha=0.5)
+                    ax.plot(x_betas[-1], S_nu_obs_betas[-1], linestyle='--', linewidth=1.0, color=dcolor, alpha=0.5)
+                    ax.fill_between(x_betas[0], y1=S_nu_obs_betas[0], y2=S_nu_obs_betas[-1],
                                     facecolor=dcolor, edgecolor="None", alpha=0.05)
             elif not all_compatible_betas:
                 if not compatible_betas[0]:
-                    ax.plot(lambda_emit_betas[0], S_nu_obs_betas[0], linestyle='--', linewidth=1.0, color=dcolor, alpha=0.5)
-                    ax.fill_between(lambda_emit_betas[0], y1=S_nu_obs_betas[0], y2=S_nu_obs_betas[low_beta_idx],
+                    ax.plot(x_betas[0], S_nu_obs_betas[0], linestyle='--', linewidth=1.0, color=dcolor, alpha=0.5)
+                    ax.fill_between(x_betas[0], y1=S_nu_obs_betas[0], y2=S_nu_obs_betas[low_beta_idx],
                                     facecolor=dcolor, edgecolor="None", alpha=0.05)
                 if not compatible_betas[-1]:
-                    ax.plot(lambda_emit_betas[-1], S_nu_obs_betas[-1], linestyle='--', linewidth=1.0, color=dcolor, alpha=0.5)
-                    ax.fill_between(lambda_emit_betas[0], y1=S_nu_obs_betas[high_beta_idx], y2=S_nu_obs_betas[-1],
+                    ax.plot(x_betas[-1], S_nu_obs_betas[-1], linestyle='--', linewidth=1.0, color=dcolor, alpha=0.5)
+                    ax.fill_between(x_betas[0], y1=S_nu_obs_betas[high_beta_idx], y2=S_nu_obs_betas[-1],
                                     facecolor=dcolor, edgecolor="None", alpha=0.05)
 
             if any_compatible_betas and annotate_results:
@@ -1542,8 +1579,8 @@ class FIR_SED_fit:
                                 "_beta_{:.1f}".format(fixed_beta), "_l0_{:.0f}".format(l0) if l0 else ''), **rdict)
 
         if show_legend:
-            handles = [matplotlib.patches.Rectangle(xy=(np.nan, np.nan), width=1, height=1, edgecolor="None", facecolor=dcolor, alpha=0.8,
-                        label=r"$T_\mathrm{{ dust }} = {:.0f} \, \mathrm{{ K }}$".format(T_dust)) for di, T_dust in enumerate(T_dusts) if T_dust in T_dust_handles]
+            handles = [matplotlib.patches.Rectangle(xy=(np.nan, np.nan), width=1, height=1, edgecolor="None", facecolor=dust_cmap(dust_norm(T_dust)), alpha=0.8,
+                        label=r"$T_\mathrm{{ dust }} = {:.0f} \, \mathrm{{ K }}$".format(T_dust)) for T_dust in T_dusts if T_dust in T_dust_handles]
             
             leg = ax.legend(handles=handles, ncol=2, loc="lower right", frameon=True, framealpha=0.8, fontsize="small")
             
@@ -1564,29 +1601,30 @@ class FIR_SED_fit:
                     L_IR_log10 = int(np.log10(rdict["L_IR_Lsun"]))
                     L_FIR_log10 = int(np.log10(rdict["L_FIR_Lsun"]))
 
-                    valstr = lambda *vals: "< {}{:.1f}{}".format(vals[0], vals[1], vals[-1]) if uplim else "= {}{:.1f} -{:.1f} +{:.1f}{}".format(*vals)
-                    print("\nM_dust {} x 10^{:d} M_sun".format(valstr('(', rdict["M_dust"]/10**M_dust_log10,
+                    valstr = lambda fmt, *vals: "< {}{:{fmt}}{}".format(vals[0], vals[1], vals[-1], fmt=fmt) if uplim \
+                                            else "= {}{:{fmt}} -{:{fmt}} +{:{fmt}}{}".format(*vals, fmt=fmt)
+                    print("\nM_dust {} x 10^{:d} M_sun".format(valstr(".1f", '(', rdict["M_dust"]/10**M_dust_log10,
                                 rdict["M_dust_lowerr"]/10**M_dust_log10, rdict["M_dust_uperr"]/10**M_dust_log10, ')'), M_dust_log10))
-                    print("L_IR {} x 10^{:d} L_sun".format(valstr('(', rdict["L_IR_Lsun"]/10**L_IR_log10,
+                    print("L_IR {} x 10^{:d} L_sun".format(valstr(".1f", '(', rdict["L_IR_Lsun"]/10**L_IR_log10,
                                 rdict["L_IR_Lsun_lowerr"]/10**L_IR_log10, rdict["L_IR_Lsun_uperr"]/10**L_IR_log10, ')'), L_IR_log10))
-                    print("L_FIR {} x 10^{:d} L_sun".format(valstr('(', rdict["L_FIR_Lsun"]/10**L_FIR_log10,
+                    print("L_FIR {} x 10^{:d} L_sun".format(valstr(".1f", '(', rdict["L_FIR_Lsun"]/10**L_FIR_log10,
                                 rdict["L_FIR_Lsun_lowerr"]/10**L_FIR_log10, rdict["L_FIR_Lsun_uperr"]/10**L_FIR_log10, ')'), L_FIR_log10))
                     print('')
-                    print("Dust-to-stellar mass fraction: {} per cent".format(valstr('', 100.0*rdict["dust_frac"],
-                                                        100.0*rdict["dust_frac_lowerr"], 100.0*rdict["dust_frac_uperr"], '')))
-                    print("Dust yield (AGB): {} M_sun".format(valstr('', rdict["dust_yield_AGB"],
+                    print("Dust-to-stellar mass fraction: {} per cent".format(valstr(".2g", '', rdict["dust_frac"],
+                                                        rdict["dust_frac_lowerr"], rdict["dust_frac_uperr"], '')))
+                    print("Dust yield (AGB): {} M_sun".format(valstr(".2g", '', rdict["dust_yield_AGB"],
                                                         rdict["dust_yield_AGB_lowerr"], rdict["dust_yield_AGB_uperr"], '')))
-                    print("Dust yield (SN): {} M_sun".format(valstr('', rdict["dust_yield_SN"],
+                    print("Dust yield (SN): {} M_sun".format(valstr(".2g", '', rdict["dust_yield_SN"],
                                                         rdict["dust_yield_SN_lowerr"], rdict["dust_yield_SN_uperr"], '')))
                 else:
                     print("\nincompatible with measurements!")
     
         if plot_data:
-            self.plot_data()
-        self.set_axes(add_top_axis=add_top_axis, set_xrange=set_xrange, set_xlabel=set_xlabel, set_ylabel=set_ylabel,
+            self.plot_data(bot_axis=bot_axis)
+        self.set_axes(bot_axis=bot_axis, add_top_axis=add_top_axis, set_xrange=set_xrange, set_xlabel=set_xlabel, set_ylabel=set_ylabel,
                         low_yspace_mult=low_yspace_mult, up_yspace_mult=up_yspace_mult, rowi=rowi, coli=coli)
         if pltfol:
-            self.save_fig(pltfol=pltfol, ptype="ranges", obj_str=obj_str, l0_list=[l0])
+            self.save_fig(pltfol=pltfol, ptype="ranges", obj_str=obj_str, l0_list=[l0], single_plot=False)
     
     def annotate_title(self):
         """Function for annotating a figure with the main object properties; designed for internal use.
@@ -1659,7 +1697,7 @@ class FIR_SED_fit:
         prec_IR = max(0, 2-math.floor(np.log10(min(rdict["L_IR_Lsun_lowerr"]/10**L_IR_log10, rdict["L_IR_Lsun_uperr"]/10**L_IR_log10))))
         prec_FIR = max(0, 2-math.floor(np.log10(min(rdict["L_FIR_Lsun_lowerr"]/10**L_FIR_log10, rdict["L_FIR_Lsun_uperr"]/10**L_FIR_log10))))
         prec_SFR = max(0, 2-math.floor(np.log10(np.min(rdict["SFR_IR_err"])))) if np.min(rdict["SFR_IR_err"]) < 1 else 0
-        prec_M = max(0, 2-math.floor(np.log10(min(rdict["M_dust_lowerr"]/10**M_dust_log10, rdict["M_dust_uperr"]/10**M_dust_log10))))
+        prec_M = max(1, 2-math.floor(np.log10(min(rdict["M_dust_lowerr"]/10**M_dust_log10, rdict["M_dust_uperr"]/10**M_dust_log10))))
         
         text = r"$L_\mathrm{{ IR }} = {:.{prec}f}_{{ -{:.{prec}f} }}^{{ +{:.{prec}f} }} \cdot 10^{{ {:d} }} \, \mathrm{{ L_\odot }}$".format(rdict["L_IR_Lsun"]/10**L_IR_log10,
                     rdict["L_IR_Lsun_lowerr"]/10**L_IR_log10, rdict["L_IR_Lsun_uperr"]/10**L_IR_log10, L_IR_log10, prec=prec_IR) + \
@@ -1679,12 +1717,12 @@ class FIR_SED_fit:
                     rdict["lambda_0_lowerr"], rdict["lambda_0_uperr"], prec=prec_l0)
         
         if not np.isnan(rdict["dust_frac"]):
-            prec_fr = max(0, 2-math.floor(np.log10(100.0*min(rdict["dust_frac_lowerr"], rdict["dust_frac_uperr"]))))
+            prec_fr = max(0, 2-math.floor(np.log10(min(rdict["dust_frac_lowerr"], rdict["dust_frac_uperr"]))))
             prec_yAGB = max(0, 2-math.floor(np.log10(min(rdict["dust_yield_AGB_lowerr"], rdict["dust_yield_AGB_uperr"]))))
             prec_ySN = max(0, 2-math.floor(np.log10(min(rdict["dust_yield_SN_lowerr"], rdict["dust_yield_SN_uperr"]))))
 
-            text += '\n' + r"$M_\mathrm{{ dust }} / M_* = {:.{prec}f}_{{ -{:.{prec}f} }}^{{ +{:.{prec}f} }} \%$".format(100.0*rdict["dust_frac"],
-                                100.0*rdict["dust_frac_lowerr"], 100.0*rdict["dust_frac_uperr"], prec=prec_fr) + \
+            text += '\n' + r"$M_\mathrm{{ dust }} / M_* = {:.{prec}f}_{{ -{:.{prec}f} }}^{{ +{:.{prec}f} }}$".format(rdict["dust_frac"],
+                                rdict["dust_frac_lowerr"], rdict["dust_frac_uperr"], prec=prec_fr) + \
                     '\n' + r"Dust yield (AGB, SN): ${:.{prec}f}_{{ -{:.{prec}f} }}^{{ +{:.{prec}f} }} \, \mathrm{{ M_\odot }}$, ".format(rdict["dust_yield_AGB"],
                                 rdict["dust_yield_AGB_lowerr"], rdict["dust_yield_AGB_uperr"], prec=prec_yAGB) + \
                             r"${:.{prec}f}_{{ -{:.{prec}f} }}^{{ +{:.{prec}f} }} \, \mathrm{{ M_\odot }}$".format(rdict["dust_yield_SN"],
@@ -1729,25 +1767,42 @@ class FIR_SED_fit:
         elif ax_type == "corner":
             ann.set_text(ann.get_text() + '\n' + text)
 
-    def plot_data(self):
+    def plot_data(self, bot_axis):
         """Function for plotting the photometric data; designed for internal use.
+
+        Parameters
+        ----------
+        bot_axis : {`"wl_emit"`, `"nu_obs"`}
+            Choice for the main x-axis to show the rest-frame wavelength (`"wl_emit"`) or observed
+            frequency (`"nu_obs"`).
 
         """
 
         for l, lrange, s_nu, s_nuerr, uplim, exclude in zip(self.lambda_emit_vals, self.lambda_emit_ranges, self.S_nu_vals, self.S_nu_errs,
                                                             self.cont_uplims, self.cont_excludes):
-            self.ax.errorbar(l, s_nu*self.fd_conv, xerr=lrange.reshape(2, 1),
+            if bot_axis == "wl_emit":
+                x = l
+                xrange = lrange
+            elif bot_axis == "nu_obs":
+                nu_obs = 299792.458 / l / (1.0 + self.z) # GHz (l is in micron)
+                x = nu_obs
+                xrange = np.abs(np.sort((299792.458 / (l + np.array([-1, 1]) * lrange) / (1.0 + self.z)) - nu_obs))
+            
+            self.ax.errorbar(x, s_nu*self.fd_conv, xerr=xrange.reshape(2, 1),
                                 yerr=0.5*s_nu*self.fd_conv if uplim else s_nuerr*self.fd_conv, uplims=uplim,
                                 marker='o', linestyle="None", color='k', alpha=0.4 if exclude else 0.8, zorder=5)
             if uplim:
-                self.ax.errorbar(l, s_nu/self.uplim_nsig*self.fd_conv,
+                self.ax.errorbar(x, s_nu/self.uplim_nsig*self.fd_conv,
                                     marker='_', linestyle="None", color='k', alpha=0.4 if exclude else 0.8, zorder=5)
     
-    def set_axes(self, add_top_axis, set_xrange, set_xlabel, set_ylabel, low_yspace_mult, up_yspace_mult, rowi, coli):
+    def set_axes(self, bot_axis, add_top_axis, set_xrange, set_xlabel, set_ylabel, low_yspace_mult, up_yspace_mult, rowi, coli):
         """Function for setting up the axes in an SED plot; designed for internal use.
 
         Parameters
         ----------
+        bot_axis : {`"wl_emit"`, `"nu_obs"`}
+            Choice for the main x-axis to show the rest-frame wavelength (`"wl_emit"`) or observed
+            frequency (`"nu_obs"`).
         add_top_axis : {`"wl_obs"`, `"nu_obs"`, `False`}
             Add second axis showing the observed wavelength (`"wl_obs"`) or frequency (`"nu_obs"`)
             on the top x-axis?
@@ -1768,22 +1823,34 @@ class FIR_SED_fit:
 
         """
 
+        lfunc = lcoord_funcs(rowi=rowi, coli=coli, z=self.z)
+
         if add_top_axis == "wl_obs":
-            lfunc = lcoord_funcs(rowi=rowi, coli=coli, z=self.z)
-            top_ax = self.ax.secondary_xaxis("top", functions=(lfunc.rf2obs, lfunc.obs2rf))
-            top_ax.tick_params(axis='x', which="both", bottom=False, top=True, labelbottom=False, labeltop=True)
+            if bot_axis == "wl_emit":
+                functions = (lfunc.lamrf2lamobs, lfunc.lamobs2lamrf)
+            elif bot_axis == "nu_obs":
+                functions = (lfunc.nuobs2lamobs, lfunc.lamobs2nuobs)
+                
+            self.top_ax = self.ax.secondary_xaxis("top", functions=functions)
+            self.top_ax.tick_params(axis='x', which="both", bottom=False, top=True, labelbottom=False, labeltop=True)
             self.ax.tick_params(axis="both", which="both", top=False, labelleft=True, labelbottom=True)
         elif add_top_axis == "nu_obs":
-            lfunc = lcoord_funcs(rowi=rowi, coli=coli, z=self.z)
-            top_ax = self.ax.secondary_xaxis("top", functions=(lambda l_emit: 299.792458/lfunc.rf2obs(l_emit), lambda nu_obs: lfunc.obs2rf(299.792458/nu_obs)))
-            top_ax.tick_params(axis='x', which="both", bottom=False, top=True, labelbottom=False, labeltop=True)
-            self.ax.tick_params(axis="both", which="both", top=False, labelleft=True, labelbottom=True)
+            if bot_axis == "wl_emit":
+                self.top_ax = self.ax.secondary_xaxis("top", functions=(lambda l_emit: 299.792458/lfunc.lamrf2lamobs(l_emit), lambda nu_obs: lfunc.lamobs2lamrf(299.792458/nu_obs)))
+                self.top_ax.tick_params(axis='x', which="both", bottom=False, top=True, labelbottom=False, labeltop=True)
+                self.ax.tick_params(axis="both", which="both", top=False, labelleft=True, labelbottom=True)
+            elif bot_axis == "nu_obs":
+                add_top_axis = False
+                self.top_ax = None
 
         self.ax.set_xscale("log")
         self.ax.set_yscale("log")
 
         if set_xrange:
-            self.ax.set_xlim(self.l_min, self.l_max)
+            if bot_axis == "wl_emit":
+                self.ax.set_xlim(self.l_min, self.l_max)
+            elif bot_axis == "nu_obs":
+                self.ax.set_xlim(lfunc.lamrf2nuobs(self.l_min), lfunc.lamrf2nuobs(self.l_max))
         
         if np.isfinite(self.F_nu_obs_min) and np.isfinite(self.F_nu_obs_max):
             self.ax.set_ylim(low_yspace_mult*self.F_nu_obs_min, up_yspace_mult*self.F_nu_obs_max)
@@ -1791,15 +1858,18 @@ class FIR_SED_fit:
         if set_xlabel == "top" or set_xlabel == "both":
             assert add_top_axis in ["wl_obs", "nu_obs"]
             if add_top_axis == "wl_obs":
-                top_ax.set_xlabel(r"$\lambda_\mathrm{{ obs }} \, (\mathrm{mm})$")
+                self.top_ax.set_xlabel(r"$\lambda_\mathrm{obs} \, (\mathrm{mm})$")
             elif add_top_axis == "nu_obs":
-                top_ax.set_xlabel(r"$\nu_\mathrm{{ obs }} \, (\mathrm{GHz})$")
+                self.top_ax.set_xlabel(r"$\nu_\mathrm{obs} \, (\mathrm{GHz})$")
         if set_xlabel == "bottom" or set_xlabel == "both":
-            self.ax.set_xlabel(r"$\lambda_\mathrm{{ emit }} \, (\mathrm{\mu m})$")
+            if bot_axis == "wl_emit":
+                self.ax.set_xlabel(r"$\lambda_\mathrm{emit} \, (\mathrm{\mu m})$")
+            elif bot_axis == "nu_obs":
+                self.ax.set_xlabel(r"$\nu_\mathrm{obs} \, (\mathrm{GHz})$")
         if set_ylabel:
             self.ax.set_ylabel(r"$F_\mathrm{{ \nu, \, obs }} \, (\mathrm{{ {} }})$".format(self.fluxdens_unit.replace("mu", r"\mu ")))
     
-    def save_fig(self, pltfol, fig=None, ptype="constraints", obj_str=None, l0_list=None):
+    def save_fig(self, pltfol, fig=None, ptype="constraints", obj_str=None, l0_list=None, single_plot=None):
         """Function for saving a figure; designed for internal use, but can also be used
         externally.
 
@@ -1820,6 +1890,9 @@ class FIR_SED_fit:
             A list of opacity model classifiers to be added to the filename of the figure.
             Default is `None`, which will revert to the main `l0_list`, given when creating
             the `FIR_SED_fit` instance.
+        single_plot : {`None`, bool}, optional
+            Indicates whether a single plot has been made for different opacity models. Default is `None`,
+            in which case a single plot has been made when `analysis` is `False`.
 
         """
 
@@ -1827,8 +1900,10 @@ class FIR_SED_fit:
             fig = self.fig
         if obj_str is None:
             obj_str = '_' + self.obj_fn
+        if single_plot is None:
+            single_plot = not self.analysis
         
-        fig.savefig(pltfol + "FIR_SED_{}{}".format(ptype, obj_str) + self.get_mstring(l0_list=l0_list) + self.pformat,
+        fig.savefig(pltfol + "FIR_SED_{}{}".format(ptype, obj_str) + self.get_mstring(l0_list=l0_list, single_plot=single_plot) + self.pformat,
                     dpi=self.dpi, bbox_inches="tight")
         
         # plt.show()
@@ -1862,7 +1937,7 @@ class FIR_SED_fit:
         
         return (l0_str, l0_txt)
     
-    def get_mstring(self, l0_list=None, analysis=None, inc_astr=True):
+    def get_mstring(self, l0_list=None, analysis=None, single_plot=None, inc_astr=True):
         """Function for creating a string to be used in a filename; designed for internal
         use.
 
@@ -1876,6 +1951,9 @@ class FIR_SED_fit:
             Manually set the value of `analysis` to be used in the string. Default is `None`,
             such that the main `analysis`, given when creating the `FIR_SED_fit` instance,
             is used.
+        single_plot : {`None`, bool}, optional
+            Indicates whether a single plot has been made for different opacity models. Default is `None`,
+            in which case a single plot has been made when `analysis` is `False`.
         inc_astr : bool, optional
             Controls whether the string will contain an identifier if `analysis` is `True`.
             Default is `True`.
@@ -1891,11 +1969,13 @@ class FIR_SED_fit:
             l0_list = self.l0_list
         if analysis is None:
             analysis = self.analysis
+        if single_plot is None:
+            single_plot = not self.analysis
         
-        if self.analysis:
-            lstr = '_' + '_'.join(sorted(set([("scl0" if l0 == "self-consistent" else "l0_{:.0f}".format(l0)) for l0 in l0_list if l0]))) if any(l0_list) else ''
-        else:
+        if single_plot:
             lstr = ''
+        else:
+            lstr = '_' + '_'.join(sorted(set([("scl0" if l0 == "self-consistent" else "l0_{:.0f}".format(l0)) for l0 in l0_list if l0]))) if any(l0_list) else ''
         
         return lstr + ("_beta_{:.1f}".format(self.fixed_beta) if self.fixed_beta else '') + ("_analysis" if analysis and inc_astr else '')
 

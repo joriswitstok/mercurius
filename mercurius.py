@@ -15,7 +15,7 @@ import numpy as np
 rng = np.random.default_rng(seed=9)
 import math
 
-from scipy.stats import gamma
+from scipy.stats import gamma, norm
 from scipy.special import erf
 
 from pymultinest.solve import Solver
@@ -75,7 +75,7 @@ def log_prob_Gauss(x, mu, cov):
     return -0.5 * np.dot(diff, np.linalg.solve(cov, diff))
 
 def mcmc_sampler(means, cov, n_dim=2, n_steps=10000, nwalkers=32):
-    print("Running {:d}D MCMC sampler with {:d} walkers performing {:d} steps on function...".format(n_dim, nwalkers, n_steps))
+    print("Running {:d}-dimensional MCMC sampler with {:d} walkers performing {:d} steps on function...".format(n_dim, nwalkers, n_steps))
 
     # Set up walkers and initial positions
     p0 = rng.normal(loc=means, scale=np.sqrt(np.diagonal(cov)), size=(nwalkers, n_dim))
@@ -140,7 +140,7 @@ def FIR_SED_spectrum(theta, z, D_L, l0_dict, lambda_emit=None):
 
         optically_thick_lambda_0 = 299792458.0 * 1e6 / nu_0 # micron (nu_0 is in Hz)
 
-    # Compute IR SED fluxes only for the given (rest-frame) wavelengths
+    # Compute FIR SED fluxes only at the given (rest-frame) wavelengths
     lambda_emit, S_nu_emit = calc_FIR_SED(z=z, beta_IR=beta_IR, T_dust=T_dust,
                                             optically_thick_lambda_0=optically_thick_lambda_0,
                                             return_spectrum=True, lambda_emit=lambda_emit)
@@ -157,10 +157,10 @@ def FIR_SED_spectrum(theta, z, D_L, l0_dict, lambda_emit=None):
     nu_ref = nu_CII # Hz
     k_nu = k_nu_star * (nu_ref/nu_star)**beta_IR
     
-    # Compute IR SED flux at the reference (rest-frame) frequency, given the dust mass (NB: uncorrected for CMB effects)
+    # Compute (properly normalised) FIR SED flux at the reference (rest-frame) frequency, given the dust mass (NB: uncorrected for CMB effects)
     if l0_dict.get("value", -1) is None:
         # Compute flux density in optically thin limit, assuming 1 - exp(-τ) ~ τ = κ_nu Σ_dust
-        S_nu_emit_ref = 10**logM_dust * M_sun_g * k_nu * Planck_func(nu_ref, T_dust) / D_L**2 * 1e26
+        S_nu_emit_norm_ref = 10**logM_dust * M_sun_g * k_nu * Planck_func(nu_ref, T_dust) / D_L**2 * 1e26
     else:
         assert l0_dict["assumption"] == "self-consistent" or l0_dict.get("value", None)
         # Compute flux density in general opacity case (see Jones et al. 2020), first computing the optical depth τ;
@@ -175,15 +175,15 @@ def FIR_SED_spectrum(theta, z, D_L, l0_dict, lambda_emit=None):
             l0_dict["cont_area_cm2"] = 10**logM_dust * M_sun_g * k_nu / tau
             Sigma_dust = 10**logM_dust * M_sun_g / l0_dict["cont_area_cm2"]
         
-        S_nu_emit_ref = (1.0 - np.exp(-tau)) * Planck_func(nu_ref, T_dust) * l0_dict["cont_area_cm2"] / D_L**2 * 1e26
+        S_nu_emit_norm_ref = (1.0 - np.exp(-tau)) * Planck_func(nu_ref, T_dust) * l0_dict["cont_area_cm2"] / D_L**2 * 1e26
     
-    # Compute IR SED flux specifically for the reference (rest-frame) frequency (NB: also uncorrected for CMB effects)
-    S_nu_emit_CII = calc_FIR_SED(z=z, beta_IR=beta_IR, T_dust=T_dust,
-                                        optically_thick_lambda_0=optically_thick_lambda_0,
-                                        return_spectrum=True, lambda_emit=299792458.0 * 1e6 / nu_ref)[1]
+    # Compute unnormalised FIR SED flux specifically for the reference (rest-frame) frequency (NB: also uncorrected for CMB effects)
+    S_nu_emit_ref = calc_FIR_SED(z=z, beta_IR=beta_IR, T_dust=T_dust,
+                                    optically_thick_lambda_0=optically_thick_lambda_0,
+                                    return_spectrum=True, lambda_emit=299792458.0 * 1e6 / nu_ref)[1]
     # Compute the normalisation of the spectrum by the ratio of the two
     # NB: both are uncorrected for CMB effects, but this correction cancels out
-    norm = S_nu_emit_ref / S_nu_emit_CII
+    norm = S_nu_emit_norm_ref / S_nu_emit_ref
     
     # Normalise emitted flux density and observed, CMB-corrected flux density;
     # NB: S_nu_obs needs a factor (1+z) compared to emitted one
@@ -241,9 +241,12 @@ class MN_FIR_SED_solver(Solver):
         assert hasattr(self, "cube_range")
         # Scale the input unit cube to apply uniform priors across all parameters (except the temperature)
         for di in range(len(cube)):
-            if di == 1:
+            if di == 2:
+                # Use a normal distribution for the dust emissivity (prior belief: beta likely around 1.8)
+                cube[di] = norm.ppf(cube[di], loc=1.8, scale=0.25)
+            elif di == 1:
                 # Use a gamma distribution for the dust temperature (prior belief: unlikely to be near CMB or extremely high temperature)
-                cube[di] = gamma.ppf(cube[di], 1.5, 0, self.cube_range[di, 0]/0.5) + self.cube_range[di, 0]
+                cube[di] = gamma.ppf(cube[di], a=1.5, loc=0, scale=self.cube_range[di, 0]/0.5) + self.cube_range[di, 0]
             else:
                 cube[di] = cube[di] * (self.cube_range[di, 1] - self.cube_range[di, 0]) + self.cube_range[di, 0]
         
@@ -491,14 +494,18 @@ class FIR_SED_fit:
                 print("Warning: invalid fluxes present ({:d}/{:d} data points), will be ignored...".format(np.sum(~valid_fluxes), len(valid_fluxes)))
         
         self.lambda_emit_vals = np.asarray(lambda_emit_vals)[valid_fluxes]
+        wl_order = np.argsort(self.lambda_emit_vals)
+        self.lambda_emit_vals = self.lambda_emit_vals[wl_order]
+        self.cont_excludes = self.cont_excludes[wl_order]
+        
         if lambda_emit_ranges is None:
             self.lambda_emit_ranges = np.tile(np.nan, (np.sum(valid_fluxes), 2))
         else:
-            self.lambda_emit_ranges = np.asarray(lambda_emit_ranges)[valid_fluxes]
-        self.S_nu_vals = np.asarray(S_nu_vals)[valid_fluxes]
-        self.S_nu_errs = np.asarray(S_nu_errs)[valid_fluxes]
-        self.cont_uplims = np.asarray(cont_uplims)[valid_fluxes]
-        self.all_uplims = np.all(self.cont_uplims)
+            self.lambda_emit_ranges = np.asarray(lambda_emit_ranges)[valid_fluxes][wl_order]
+        self.S_nu_vals = np.asarray(S_nu_vals)[valid_fluxes][wl_order]
+        self.S_nu_errs = np.asarray(S_nu_errs)[valid_fluxes][wl_order]
+        self.cont_uplims = np.asarray(cont_uplims)[valid_fluxes][wl_order]
+        self.all_uplims = np.all(self.cont_uplims[~self.cont_excludes])
         
         self.uplim_nsig = uplim_nsig
         
@@ -517,20 +524,24 @@ class FIR_SED_fit:
         self.n_meas = self.lambda_emit_vals.size
         self.cont_det = ~self.cont_uplims * ~self.cont_excludes
     
-    def fit_data(self, pltfol, fit_uplims=True, return_samples=False, lambda_emit=None,
+    def fit_data(self, pltfol=None, fit_uplims=True, return_samples=False, save_results=True, lambda_emit=None,
                     n_live_points=400, evidence_tolerance=0.5, sampling_efficiency=0.8, max_iter=0,
-                    force_run=False, skip_redundant_calc=False, remove_mnfiles=False, ann_size="small", mnverbose=False):
+                    force_run=False, skip_redundant_calc=False, ann_size="small", mnverbose=False):
         """Function for fitting the photometric data of the object with greybody spectra for
         all opacity models set in `l0_list`.
 
         Parameters
         ----------
-        pltfol : str
-            Path to folder in which corner plots of the results are saved.
+        pltfol : str, optional
+            Path to folder in which a corner plot of the results is saved. Default is
+            `None`, so that no corner plot is saved.
         fit_uplims : bool, optional
             Include upper limits in the fitting routine?
         return_samples : bool, optional
-            Return samples directly?
+            Return samples directly? Default: `False`.
+        save_results : bool, optional
+            Save results produced by MultiNest after a run and save resulting samples
+            in compressed NumPy format (used for plotting afterwards)? Default: `True`.
         lambda_emit : array_like, optional
             Values in micron to be used as the rest-frame wavelengths in results,
             including the (F)IR luminosities. Default is `None`, which will default
@@ -552,9 +563,8 @@ class FIR_SED_fit:
         force_run : bool, optional
             Force a new run of the fitting routine, even if previous results are found.
         skip_redundant_calc : bool, optional
-            Entirely skip the data fitting (including the calculation of ) if results are already present?
-        remove_mnfiles : bool, optional
-            Remove files created by MultiNest after a run?
+            Entirely skip the data fitting (including the calculation of ) if results
+            are already present?
         ann_size : float or {'xx-small', 'x-small', 'small', 'medium',
                     'large', 'x-large', 'xx-large'}, optional
             Argument used by `matplotlib.text.Text` for the font size of the annotation.
@@ -564,20 +574,23 @@ class FIR_SED_fit:
         
         Returns
         ----------
-        flat_samples : array_like
-            If `return_samples` is set to `True`, an (N, 2) or (N, 3) array containing N samples of
-            the parameters that are varied is returned (depending on whether the dust emissivity is
-            varied, with `fixed_beta` equal to `None`, or kept constant).
+        flat_samples : tuple
+            If `return_samples` is set to `True`, a tuple containing two lists is returned:
+            one of arrays containing N samples of various parameters and one of the
+            parameter names (the exact parameters depending on whether the dust emissivity
+            is varied, with `fixed_beta` equal to `None`, or kept constant).
 
         """
         
         if self.all_uplims:
             print("Warning: only upper limits for {} specified! No MultiNest fit performed...".format(self.obj))
-            return 1
+            return np.ones((2, 0)) if return_samples else 1
+        
+        if not return_samples and not save_results:
+            print("Warning: results neither returned nor saved...")
 
-        if not return_samples:
-            # Set percentiles to standard ±1σ confidence intervals around the median value
-            percentiles = [0.5*(100-68.2689), 50, 0.5*(100+68.2689)]
+        # Set percentiles to standard ±1σ confidence intervals around the median value
+        percentiles = [0.5*(100-68.2689), 50, 0.5*(100+68.2689)]
         
         for l0 in self.l0_list:
             # Without knowing the source's area, can only fit an optically thin SED or one with fixed lambda_0
@@ -632,15 +645,16 @@ class FIR_SED_fit:
                     raise RuntimeError("error occurred while running MultiNest fit...\n{}".format(e))
                 
                 os.chdir(currentdir)
-                if remove_mnfiles:
+                if not save_results:
                     shutil.rmtree(omnrfol)
                 
                 # Note results are also saved as MNpost_equal_weights.dat; load with np.loadtxt(omnrfol + "MNpost_equal_weights.dat")[:, :n_dim]
                 flat_samples = MN_solv.samples
                 del MN_solv
                 
-                # Save results
-                np.savez_compressed(samples_fname, flat_samples=flat_samples)
+                if save_results:
+                    # Save results
+                    np.savez_compressed(samples_fname, flat_samples=flat_samples)
                 if self.verbose:
                     print("\nFreshly calculated MultiNest samples with {}{}".format("β = {:.1f}".format(self.fixed_beta) if self.fixed_beta else "varying β", l0_txt),
                             "for {}!\nNumber of samples: {:d}, array size: {:.2g} MB".format(self.obj, flat_samples.shape[0], flat_samples.nbytes/1e6))
@@ -666,8 +680,9 @@ class FIR_SED_fit:
                 beta_IR, rdict["beta_IR_lowerr"], rdict["beta_IR_uperr"] = self.fixed_beta, np.nan, np.nan
                 flat_samples = np.concatenate((flat_samples, np.tile(beta_IR, n_samples).reshape(n_samples, 1)), axis=1)
             else:
+                # Calculate percentiles of dust emissivity, masking any non-finite values
                 beta_samples = flat_samples[:, 2]
-                beta_perc = np.percentile(beta_samples, percentiles, axis=0)
+                beta_perc = np.percentile(beta_samples[np.isfinite(beta_samples)], percentiles, axis=0)
                 beta_IR, rdict["beta_IR_lowerr"], rdict["beta_IR_uperr"] = beta_perc[1], *np.diff(beta_perc)
             rdict["beta_IR"] = beta_IR
             
@@ -755,7 +770,7 @@ class FIR_SED_fit:
                 L_FIR_Lsun_samples.append(F_FIR * 4.0 * np.pi * self.D_L**2 / L_sun_ergs) # L_sun
 
             # Wien's displacement law to find the observed (after correction for CMB attenuation) peak temperature
-            T_peak_samples = [2.897771955e3/lambda_emit[np.argmax(S_nu_emit)] for S_nu_emit in S_nu_emit_samples]
+            T_peak_samples = np.array([2.897771955e3/lambda_emit[np.argmax(S_nu_emit)] for S_nu_emit in S_nu_emit_samples])
             T_perc = np.percentile(T_peak_samples, percentiles)
             rdict["T_peak_val"], rdict["T_peak_lowerr"], rdict["T_peak_uperr"] = T_perc[1], *np.diff(T_perc)
             if self.T_lolim:
@@ -795,14 +810,13 @@ class FIR_SED_fit:
             rdict["SFR_err"] = np.sqrt(np.tile(self.SFR_UV_err, 2)**2 + (rdict["SFR_IR"]/3.0 if rdict["L_IR_uplim"] else rdict["SFR_IR_err"])**2)
 
             extra_dim = 3
-            names = ["logM_dust", "L_IR", "L_FIR", "T_dust", "T_peak"]
+            names = ["logM_dust", "logL_IR", "logL_FIR", "T_dust", "T_peak"]
             data = [logM_dust_samples, np.log10(L_IR_Lsun_samples), np.log10(L_FIR_Lsun_samples), T_dust_samples, T_peak_samples]
-            del logM_dust_samples, L_IR_Lsun_samples, L_FIR_Lsun_samples
-            bins = [100, 100, 100, 100, 100]
-            ranges = [0.95, 0.95, 0.95,
-                        (0.8*T_CMB_obs*(1.0+self.z) if np.percentile(T_dust_samples, 99) < 40 else 0, np.percentile(T_dust_samples, 99)),
-                        (0.8*T_CMB_obs*(1.0+self.z) if np.percentile(T_peak_samples, 99) < 40 else 0, np.percentile(T_peak_samples, 99))]
-            del T_dust_samples, T_peak_samples
+            del logM_dust_samples, L_IR_Lsun_samples, L_FIR_Lsun_samples, T_dust_samples, T_peak_samples
+            
+            n_bins = max(50, n_samples//500)
+            bins = [n_bins, n_bins, n_bins, n_bins, n_bins]
+            
             labels = [r"$\log_{10} \left( M_\mathrm{dust} \, (\mathrm{M_\odot}) \right)$", r"$\log_{10} \left( L_\mathrm{IR} \, (\mathrm{L_\odot}) \right)$",
                         r"$\log_{10} \left( L_\mathrm{FIR} \, (\mathrm{L_\odot}) \right)$",
                         r"$T_\mathrm{dust} \, (\mathrm{K})$", r"$T_\mathrm{peak} \, (\mathrm{K})$"]
@@ -812,86 +826,109 @@ class FIR_SED_fit:
                 names.insert(1, "lambda_0")
                 data.insert(1, lambda_0_samples)
                 del lambda_0_samples
-                bins.insert(1, 100)
-                ranges.insert(1, 0.9)
+                bins.insert(1, n_bins)
                 labels.insert(1, r"$\lambda_0$")
             if not self.fixed_beta:
                 names.append("beta")
                 data.append(beta_samples)
                 del beta_samples
-                bins.append(100)
-                ranges.append(beta_range)
+                bins.append(n_bins)
                 labels.append(r"$\beta_\mathrm{IR}$")
             
-            cfig = corner.corner(np.transpose(data), labels=labels, bins=bins, range=ranges,
-                                    quantiles=[0.5*(1-0.682689), 0.5, 0.5*(1+0.682689)],
-                                    color=dcolor, show_titles=True, title_kwargs=dict(size="small"))
+            # Deselect non-finite data for histograms
+            select_data = np.product([np.isfinite(d) for d in data], axis=0).astype(bool)
+            if not np.any(select_data):
+                print("Warning: MultiNest fit of {} resulted in non-finite parameters...".format(self.obj))
+                return np.ones((2, 0)) if return_samples else 1
+            data = [d[select_data] for d in data]
 
-            text = self.obj
-            if self.reference:
-                text += " ({})".format(self.reference.replace('(', '').replace(')', ''))
-                size = "medium"
+            ranges = []
+            for n, d in zip(names, data):
+                if n in ["logM_dust", "logL_IR", "logL_FIR"]:
+                    ranges.append((math.floor(np.min(d)), math.ceil(np.max(d))))
+                elif n in ["T_dust", "T_peak"]:
+                    ranges.append((math.floor(0.8*T_CMB_obs*(1.0+self.z)) if np.percentile(d, 99) < 40 else 0, math.ceil(np.percentile(d, 99.5))))
+            
+            if l0 == "self-consistent":
+                ranges.insert(1, 0.9)
+            if not self.fixed_beta:
+                ranges.append((0.75, 5.25))
+            
+            if pltfol:
+                cfig = corner.corner(np.transpose(data), labels=labels, bins=bins, range=ranges,
+                                        quantiles=[0.5*(1-0.682689), 0.5, 0.5*(1+0.682689)],
+                                        color=dcolor, show_titles=True, title_kwargs=dict(size="small"))
+
+                text = self.obj
+                if self.reference:
+                    text += " ({})".format(self.reference.replace('(', '').replace(')', ''))
+                    size = "medium"
+                else:
+                    size = "large"
+                text += '\n' + r"$z = {:.6g}$, $T_\mathrm{{ CMB }} = {:.2f} \, \mathrm{{ K }}$".format(self.z, T_CMB_obs*(1.0+self.z))
+                if not np.isnan(self.obj_M):
+                    text += '\n' + r"$M_* = {:.1f}_{{-{:.1f}}}^{{+{:.1f}}} \cdot 10^{{{:d}}} \, \mathrm{{M_\odot}}$".format(self.obj_M/10**int(np.log10(self.obj_M)),
+                                self.obj_M_lowerr/10**int(np.log10(self.obj_M)), self.obj_M_uperr/10**int(np.log10(self.obj_M)), int(np.log10(self.obj_M)))
+                if not np.isnan(self.SFR_UV):
+                    text += r", $\mathrm{{ SFR_{{UV}} }} = {:.0f}{}".format(self.SFR_UV, r'' if np.isnan(self.SFR_UV_err) else r" \pm {:.0f}".format(self.SFR_UV_err)) + \
+                            r" \, \mathrm{{M_\odot yr^{{-1}}}}$"
+                
+                cfig.suptitle(text, size=size)
+
+                # Extract the axes
+                axes_c = np.array(cfig.axes).reshape((n_dim+extra_dim, n_dim+extra_dim))
+
+                # Loop over the histograms
+                for ri in range(n_dim+extra_dim):
+                    for ci in range(ri):
+                        axes_c[ri, ci].vlines(np.percentile(data[ci], percentiles), ymin=0, ymax=1,
+                                                transform=axes_c[ri, ci].get_xaxis_transform(), linestyles=['--', '-', '--'], color="grey")
+                        axes_c[ri, ci].hlines(np.percentile(data[ri], percentiles), xmin=0, xmax=1,
+                                                transform=axes_c[ri, ci].get_yaxis_transform(), linestyles=['--', '-', '--'], color="grey")
+                        axes_c[ri, ci].plot(np.percentile(data[ci], 50), np.percentile(data[ri], 50), color="grey", marker='s', mfc="None", mec="grey")
+                
+                ax_c = axes_c[names.index("T_peak"), names.index("T_dust")]
+                ax_c.plot(np.linspace(-10, 200, 10), np.linspace(-10, 200, 10), linestyle='--', color="lightgrey", alpha=0.6)
+                
+                ax_c = axes_c[names.index("T_dust"), names.index("T_dust")]
+                ax_c.axvline(T_CMB_obs*(1.0+self.z), linestyle='--', color='k', alpha=0.6)
+                ax_c.annotate(text=r"$T_\mathrm{{ CMB }} (z = {:.6g})$".format(self.z), xy=(T_CMB_obs*(1.0+self.z), 0.5), xytext=(-2, 0),
+                                xycoords=ax_c.get_xaxis_transform(), textcoords="offset points", rotation="vertical",
+                                va="center", ha="right", size="xx-small", alpha=0.8).set_bbox(dict(boxstyle="Round, pad=0.05", facecolor='w', edgecolor="None", alpha=0.8))
+                if self.T_lolim or self.T_uplim:
+                    ax_c.axvline(T_lim, color="grey", alpha=0.6)
+                    ax_c.annotate(text=("Lower" if self.T_lolim else "Upper") + " limit (95% conf.)", xy=(T_lim, 1), xytext=(2, -4),
+                                    xycoords=ax_c.get_xaxis_transform(), textcoords="offset points", rotation="vertical",
+                                    va="top", ha="left", size="xx-small", alpha=0.8).set_bbox(dict(boxstyle="Round, pad=0.05", facecolor='w', edgecolor="None", alpha=0.8))
+                
+                ax_c = axes_c[names.index("T_peak"), names.index("T_peak")]
+                ax_c.axvline(T_CMB_obs*(1.0+self.z), linestyle='--', color='k', alpha=0.6)
+                ax_c.annotate(text=r"$T_\mathrm{{ CMB }} (z = {:.6g})$".format(self.z), xy=(T_CMB_obs*(1.0+self.z), 0.5), xytext=(-2, 0),
+                                xycoords=ax_c.get_xaxis_transform(), textcoords="offset points", rotation="vertical",
+                                va="center", ha="right", size="xx-small", alpha=0.8).set_bbox(dict(boxstyle="Round, pad=0.05", facecolor='w', edgecolor="None", alpha=0.8))
+                if self.T_lolim or self.T_uplim:
+                    ax_c.axvline(rdict["T_peak"], color="grey", alpha=0.6)
+                    ax_c.annotate(text=("Lower" if self.T_lolim else "Upper") + " limit (95% conf.)", xy=(rdict["T_peak"], 1), xytext=(2, -4),
+                                    xycoords=ax_c.get_xaxis_transform(), textcoords="offset points", rotation="vertical",
+                                    va="top", ha="left", size="xx-small", alpha=0.8).set_bbox(dict(boxstyle="Round, pad=0.05", facecolor='w', edgecolor="None", alpha=0.8))
+                
+                self.annotate_results(rdict, [axes_c[0, -1], axes_c[1, -1]], ax_type="corner", ann_size=ann_size)
+                cfig.savefig(pltfol + "Corner_MN_" + self.obj_fn + self.get_mstring(l0_list=[l0], inc_astr=False) + self.pformat,
+                                dpi=self.dpi, bbox_inches="tight")
+        
+                # plt.show()
+                plt.close(cfig)
+            
+            if save_results:
+                # Save results
+                np.savez_compressed(self.mnrfol + "{}_MN_FIR_SED_fit_{}{}.npz".format(self.obj_fn, self.beta_str, l0_str), **rdict)
+                np.savez_compressed(self.mnrfol + "{}_MN_FIR_SED_data_samples_{}{}.npz".format(self.obj_fn, self.beta_str, l0_str),
+                                    data=data, names=names)
+                self.fresh_calculation[l0] = True
             else:
-                size = "large"
-            text += '\n' + r"$z = {:.6g}$, $T_\mathrm{{ CMB }} = {:.2f} \, \mathrm{{ K }}$".format(self.z, T_CMB_obs*(1.0+self.z))
-            if not np.isnan(self.obj_M):
-                text += '\n' + r"$M_* = {:.1f}_{{-{:.1f}}}^{{+{:.1f}}} \cdot 10^{{{:d}}} \, \mathrm{{M_\odot}}$".format(self.obj_M/10**int(np.log10(self.obj_M)),
-                            self.obj_M_lowerr/10**int(np.log10(self.obj_M)), self.obj_M_uperr/10**int(np.log10(self.obj_M)), int(np.log10(self.obj_M)))
-            if not np.isnan(self.SFR_UV):
-                text += r", $\mathrm{{ SFR_{{UV}} }} = {:.0f}{}".format(self.SFR_UV, r'' if np.isnan(self.SFR_UV_err) else r" \pm {:.0f}".format(self.SFR_UV_err)) + \
-                        r" \, \mathrm{{M_\odot yr^{{-1}}}}$"
+                # Keep results for plotting purposes
+                self.rdict = rdict
             
-            cfig.suptitle(text, size=size)
-
-            # Extract the axes
-            axes_c = np.array(cfig.axes).reshape((n_dim+extra_dim, n_dim+extra_dim))
-
-            # Loop over the histograms
-            for ri in range(n_dim+extra_dim):
-                for ci in range(ri):
-                    axes_c[ri, ci].vlines(np.percentile(data[ci], percentiles), ymin=0, ymax=1,
-                                            transform=axes_c[ri, ci].get_xaxis_transform(), linestyles=['--', '-', '--'], color="grey")
-                    axes_c[ri, ci].hlines(np.percentile(data[ri], percentiles), xmin=0, xmax=1,
-                                            transform=axes_c[ri, ci].get_yaxis_transform(), linestyles=['--', '-', '--'], color="grey")
-                    axes_c[ri, ci].plot(np.percentile(data[ci], 50), np.percentile(data[ri], 50), color="grey", marker='s', mfc="None", mec="grey")
-            
-            ax_c = axes_c[names.index("T_peak"), names.index("T_dust")]
-            ax_c.plot(np.linspace(-10, 200, 10), np.linspace(-10, 200, 10), linestyle='--', color="lightgrey", alpha=0.6)
-            
-            ax_c = axes_c[names.index("T_dust"), names.index("T_dust")]
-            ax_c.axvline(T_CMB_obs*(1.0+self.z), linestyle='--', color='k', alpha=0.6)
-            ax_c.annotate(text=r"$T_\mathrm{{ CMB }} (z = {:.6g})$".format(self.z), xy=(T_CMB_obs*(1.0+self.z), 0.5), xytext=(-2, 0),
-                            xycoords=ax_c.get_xaxis_transform(), textcoords="offset points", rotation="vertical",
-                            va="center", ha="right", size="xx-small", alpha=0.8).set_bbox(dict(boxstyle="Round, pad=0.05", facecolor='w', edgecolor="None", alpha=0.8))
-            if self.T_lolim or self.T_uplim:
-                ax_c.axvline(T_lim, color="grey", alpha=0.6)
-                ax_c.annotate(text=("Lower" if self.T_lolim else "Upper") + " limit (95% conf.)", xy=(T_lim, 1), xytext=(2, -4),
-                                xycoords=ax_c.get_xaxis_transform(), textcoords="offset points", rotation="vertical",
-                                va="top", ha="left", size="xx-small", alpha=0.8).set_bbox(dict(boxstyle="Round, pad=0.05", facecolor='w', edgecolor="None", alpha=0.8))
-            
-            ax_c = axes_c[names.index("T_peak"), names.index("T_peak")]
-            ax_c.axvline(T_CMB_obs*(1.0+self.z), linestyle='--', color='k', alpha=0.6)
-            ax_c.annotate(text=r"$T_\mathrm{{ CMB }} (z = {:.6g})$".format(self.z), xy=(T_CMB_obs*(1.0+self.z), 0.5), xytext=(-2, 0),
-                            xycoords=ax_c.get_xaxis_transform(), textcoords="offset points", rotation="vertical",
-                            va="center", ha="right", size="xx-small", alpha=0.8).set_bbox(dict(boxstyle="Round, pad=0.05", facecolor='w', edgecolor="None", alpha=0.8))
-            if self.T_lolim or self.T_uplim:
-                ax_c.axvline(rdict["T_peak"], color="grey", alpha=0.6)
-                ax_c.annotate(text=("Lower" if self.T_lolim else "Upper") + " limit (95% conf.)", xy=(rdict["T_peak"], 1), xytext=(2, -4),
-                                xycoords=ax_c.get_xaxis_transform(), textcoords="offset points", rotation="vertical",
-                                va="top", ha="left", size="xx-small", alpha=0.8).set_bbox(dict(boxstyle="Round, pad=0.05", facecolor='w', edgecolor="None", alpha=0.8))
-            
-            self.annotate_results(rdict, [axes_c[0, -1], axes_c[1, -1]], ax_type="corner", ann_size=ann_size)
-            cfig.savefig(pltfol + "Corner_MN_" + self.obj_fn + self.get_mstring(l0_list=[l0], inc_astr=False) + self.pformat,
-                            dpi=self.dpi, bbox_inches="tight")
-    
-            # plt.show()
-            plt.close(cfig)
-            
-            # Save results
-            np.savez_compressed(self.mnrfol + "{}_MN_FIR_SED_fit_{}{}.npz".format(self.obj_fn, self.beta_str, l0_str), **rdict)
-            np.savez_compressed(self.mnrfol + "{}_MN_FIR_SED_data_samples_{}{}.npz".format(self.obj_fn, self.beta_str, l0_str),
-                                data=data, names=names)
-            self.fresh_calculation[l0] = True
             if self.verbose:
                 self.print_results(rdict, l0_txt, rtype="calculated")
             
@@ -951,7 +988,7 @@ class FIR_SED_fit:
                                                 rdict["dust_yield_SN_lowerr"], rdict["dust_yield_SN_uperr"], fmt=fmt))
             print('')
     
-    def plot_MN_fit(self, l0_list=None, fig=None, ax=None, pltfol=None, obj_str=None, single_plot=None,
+    def plot_MN_fit(self, l0_list=None, fig=None, ax=None, ax_res=None, pltfol=None, obj_str=None, single_plot=None,
                     annotate_title=True, plot_data=True, bot_axis="wl_emit", add_top_axis="wl_obs",
                     set_xrange=True, set_xlabel="both", set_ylabel=True, low_yspace_mult=0.05, up_yspace_mult=4,
                     ann_size="small", show_T_peak=False, leg_framealpha=0, rowi=0, coli=0):
@@ -973,6 +1010,9 @@ class FIR_SED_fit:
             Axes instance to use for plotting. If `fig` and `ax` are not given, `plt.subplots()`
             will be used to create them. Otherwise, if `ax` is given but `fig` is not,
             `ax.get_figure()` will be used to retrieve `fig`. Default for `ax` is `None` (not set).
+        ax_res : {`None`, bool, instance of `matplotlib.axes.Axes`}, optional
+            Axes instance to use for plotting residual fluxes. When `ax_res` is `None` (default) or
+            `True`, a new axis will be produced with `plt.subplots()`.
         pltfol : {`None`, str}, optional
             Path to folder in which figures are saved. Default is `None` (plots are not saved
             directly).
@@ -1036,32 +1076,61 @@ class FIR_SED_fit:
             handles = []
         if leg_framealpha is None:
             leg_framealpha = plt.rcParams["legend.framealpha"]
+        
+        plot_ax_res = ax_res is None or ax_res is True
+
+        if plot_ax_res:
+            self.residuals_min = []
+            self.residuals_max = []
 
         for l0 in l0_list:
+            height_ratios = [4, 1]
             if create_fig:
                 # Prepare figure for plotting FIR SED
-                fig, ax = plt.subplots()
+                if plot_ax_res:
+                    fig, (ax, ax_res) = plt.subplots(nrows=2, ncols=1, sharex=True, squeeze=True, gridspec_kw={"hspace": 0, "height_ratios": height_ratios})
+                else:
+                    fig, ax = plt.subplots()
+                
                 if single_plot:
                     create_fig = False
             elif fig is None:
                 fig = ax.get_figure()
+                if plot_ax_res and ax_res is None:
+                    # Restructure gridspec layout to fit in residual axes
+                    gs = fig.add_gridspec(nrows=2, ncols=1, hspace=0, height_ratios=height_ratios)
+                    ax.set_position(gs[0].get_position(fig))
+                    ax_res = fig.add_subplot()
             elif ax is None:
-                ax = fig.add_subplot()
+                if plot_ax_res:
+                    gs = fig.add_gridspec(nrows=2, ncols=1, hspace=0, height_ratios=height_ratios)
+                    ax = fig.add_subplot(gs[0])
+                    ax_res = fig.add_subplot(gs[1])
+                else:
+                    ax = fig.add_subplot()
+            else:
+                if plot_ax_res and ax_res is None:
+                    # Restructure gridspec layout to fit in residual axes
+                    gs_orig = ax.get_gridspec()
+                    gs = fig.add_gridspec(nrows=2*gs_orig._nrows, ncols=gs_orig._ncols, height_ratios=gs_orig._nrows*height_ratios)
+                    sb_params = {sb_param: gs_orig.get_subplot_params().__dict__[sb_param] for sb_param in gs_orig.locally_modified_subplot_params()}
+                    gs.update(**sb_params)
+                    
+                    ax.set_position(gs[2*rowi, coli].get_position(fig))
+                    ax_res = fig.add_subplot(gs[2*rowi+1, coli])
 
             self.fig, self.ax = fig, ax
+            if plot_ax_res:
+                self.ax_res = ax_res
 
             if annotate_title:
                 self.annotate_title()
             
             l0_str, l0_txt = self.get_l0string(l0)
-
-            rdict_fname = self.mnrfol + "{}_MN_FIR_SED_fit_{}{}.npz".format(self.obj_fn, self.beta_str, l0_str)
-            if os.path.isfile(rdict_fname):
-                rdict = np.load(rdict_fname)
-            else:
-                if self.verbose:
-                    print("Warning: MultiNest results with {}{}".format("β = {:.1f}".format(self.fixed_beta) if self.fixed_beta else "varying β", l0_txt),
-                            "for {} not found! Filename:\n{}\nContinuing...".format(self.obj, rdict_fname.split('/')[-1]))
+            
+            rdict = self.load_rdict(l0)
+            
+            if rdict is None:
                 continue
             
             M_dust_log10 = int(np.log10(rdict["M_dust"]))
@@ -1070,35 +1139,45 @@ class FIR_SED_fit:
             
             lambda_emit = rdict["lambda_emit"]
             if bot_axis == "wl_emit":
-                x = lambda_emit
+                self.x = lambda_emit
             elif bot_axis == "nu_obs":
                 nu_obs = 299792.458 / lambda_emit / (1.0 + self.z) # GHz (lambda_emit is in micron)
-                x = nu_obs
-            S_nu_obs = rdict["S_nu_obs"]
+                self.x = nu_obs
+            self.S_nu_obs = rdict["S_nu_obs"]
 
             y1 = rdict["y1"]
             y2 = rdict["y2"]
             
             # Plot the observed spectrum (intrinsic spectrum is nearly the same apart from at the very red wavelengths above ~100 micron)
-            ax.plot(x, S_nu_obs*self.fd_conv, linewidth=1.5,
+            ax.plot(self.x, self.S_nu_obs*self.fd_conv, linewidth=1.5,
                     linestyle=self.l0_linestyles.get(l0, '-'), color=dcolor, alpha=0.8)
+            
+            if plot_ax_res:
+                # Plot the residuals of the observed spectrum
+                ax_res.axhline(y=0, linewidth=1.5, linestyle=self.l0_linestyles.get(l0, '-'), color=dcolor, alpha=0.8)
             
             if show_T_peak and (show_T_peak == "all" or show_T_peak == l0):
                 peak_idx = np.argmax(rdict["S_nu_emit"])
-                prec = max(0, 2-math.floor(np.log10(100.0*min(rdict["T_dust_lowerr"], rdict["T_dust_uperr"]))))
+                prec = max(0, 2-math.floor(np.log10(min(rdict["T_dust_lowerr"], rdict["T_dust_uperr"]))))
                 
                 ax.annotate(text=r"$T_\mathrm{{ peak }} = {:.{prec}f}_{{ -{:.{prec}f} }}^{{ +{:.{prec}f} }} \, \mathrm{{ K }}$".format(rdict["T_peak_val"],
                             rdict["T_peak_lowerr"], rdict["T_peak_uperr"], prec=prec) + \
                                 (r" (${} {:.{prec}f} \, \mathrm{{ K }}$)".format(r'>' if self.T_lolim else r'<', rdict["T_peak"], prec=prec) if self.T_lolim or self.T_uplim else r''),
-                            xy=(x[peak_idx], S_nu_obs[peak_idx]*self.fd_conv), xytext=(0, -40), xycoords="data", textcoords="offset points",
+                            xy=(self.x[peak_idx], self.S_nu_obs[peak_idx]*self.fd_conv), xytext=(0, -40), xycoords="data", textcoords="offset points",
                             va="top", ha="center", size=ann_size, alpha=0.8,
                             arrowprops={"arrowstyle": '-', "shrinkA": 0, "shrinkB": 0, "color": dcolor, "alpha": 0.8},
                             zorder=6).set_bbox(dict(boxstyle="Round, pad=0.1", linestyle=self.l0_linestyles.get(l0, '-'), facecolor='w', edgecolor=dcolor, alpha=0.8))
             
-            ax.fill_between(x, y1=y1*self.fd_conv, y2=y2*self.fd_conv, facecolor=dcolor, edgecolor="None", alpha=0.1)
+            ax.fill_between(self.x, y1=y1*self.fd_conv, y2=y2*self.fd_conv, facecolor=dcolor, edgecolor="None", alpha=0.1)
             
-            if np.min(y1[(lambda_emit >= max(20, self.l_min)) * (lambda_emit <= min(1e3, self.l_max))]) * self.fd_conv < self.F_nu_obs_min:
-                self.F_nu_obs_min = np.nanmin(y1[(lambda_emit >= max(20, self.l_min)) * (lambda_emit <= min(1e3, self.l_max))]) * self.fd_conv
+            if plot_ax_res:
+                # Plot the residuals of the observed spectrum
+                ax_res.fill_between(self.x, y1=(y1-self.S_nu_obs)*self.fd_conv, y2=(y2-self.S_nu_obs)*self.fd_conv, facecolor=dcolor, edgecolor="None", alpha=0.1)
+                self.residuals_min.append(np.min((1.25*y1-self.S_nu_obs)*self.fd_conv))
+                self.residuals_max.append(np.max((1.25*y2-self.S_nu_obs)*self.fd_conv))
+            
+            # if np.min(y1[(lambda_emit >= max(20, self.l_min)) * (lambda_emit <= min(1e3, self.l_max))]) * self.fd_conv < self.F_nu_obs_min:
+            #     self.F_nu_obs_min = np.nanmin(y1[(lambda_emit >= max(20, self.l_min)) * (lambda_emit <= min(1e3, self.l_max))]) * self.fd_conv
             if np.max(y2[(lambda_emit >= max(20, self.l_min)) * (lambda_emit <= min(1e3, self.l_max))]) * self.fd_conv > self.F_nu_obs_max:
                 self.F_nu_obs_max = np.nanmax(y2[(lambda_emit >= max(20, self.l_min)) * (lambda_emit <= min(1e3, self.l_max))]) * self.fd_conv
             
@@ -1138,9 +1217,9 @@ class FIR_SED_fit:
                     handles.append(BTuple(([dcolor], [0.1], 1.5, self.l0_linestyles.get(l0, '-'), dcolor, 0.8), label + '\n'))
 
             if not single_plot:
-                self.plot_data(bot_axis=bot_axis)
+                self.plot_data(bot_axis=bot_axis, plot_ax_res=plot_ax_res)
                 self.set_axes(bot_axis=bot_axis, add_top_axis=add_top_axis, set_xrange=set_xrange, set_xlabel=set_xlabel, set_ylabel=set_ylabel,
-                                low_yspace_mult=low_yspace_mult, up_yspace_mult=up_yspace_mult, rowi=rowi, coli=coli)
+                                low_yspace_mult=low_yspace_mult, up_yspace_mult=up_yspace_mult, rowi=rowi, coli=coli, plot_ax_res=plot_ax_res)
                 if pltfol:
                     self.save_fig(pltfol=pltfol, ptype="MN_fit", l0_list=[l0], single_plot=single_plot)
         
@@ -1154,9 +1233,9 @@ class FIR_SED_fit:
                             prop={"size": "small"})
             
             if plot_data:
-                self.plot_data(bot_axis=bot_axis)
+                self.plot_data(bot_axis=bot_axis, plot_ax_res=plot_ax_res)
             self.set_axes(bot_axis=bot_axis, add_top_axis=add_top_axis, set_xrange=set_xrange, set_xlabel=set_xlabel, set_ylabel=set_ylabel,
-                            low_yspace_mult=low_yspace_mult, up_yspace_mult=up_yspace_mult, rowi=rowi, coli=coli)
+                            low_yspace_mult=low_yspace_mult, up_yspace_mult=up_yspace_mult, rowi=rowi, coli=coli, plot_ax_res=plot_ax_res)
             if pltfol:
                 self.save_fig(pltfol=pltfol, ptype="MN_fit", l0_list=l0_list, obj_str=obj_str, single_plot=single_plot)
     
@@ -1749,7 +1828,7 @@ class FIR_SED_fit:
             beta_str = r"$\beta_\mathrm{{ IR }} = {:.{prec}f}_{{ -{:.{prec}f} }}^{{ +{:.{prec}f} }}$".format(rdict["beta_IR"],
                         rdict["beta_IR_lowerr"], rdict["beta_IR_uperr"], prec=prec)
         
-        prec = max(0, 2-math.floor(np.log10(100.0*min(rdict["T_dust_lowerr"], rdict["T_dust_uperr"]))))
+        prec = max(0, 2-math.floor(np.log10(min(rdict["T_dust_lowerr"], rdict["T_dust_uperr"]))))
 
         text = '\n' + r"$T_\mathrm{{ dust }} = {:.{prec}f}_{{ -{:.{prec}f} }}^{{ +{:.{prec}f} }} \, \mathrm{{ K }}".format(rdict["T_dust"],
                     rdict["T_dust_lowerr"], rdict["T_dust_uperr"], prec=prec) + T_lim_str + \
@@ -1767,7 +1846,7 @@ class FIR_SED_fit:
         elif ax_type == "corner":
             ann.set_text(ann.get_text() + '\n' + text)
 
-    def plot_data(self, bot_axis):
+    def plot_data(self, bot_axis, plot_ax_res=False):
         """Function for plotting the photometric data; designed for internal use.
 
         Parameters
@@ -1775,9 +1854,11 @@ class FIR_SED_fit:
         bot_axis : {`"wl_emit"`, `"nu_obs"`}
             Choice for the main x-axis to show the rest-frame wavelength (`"wl_emit"`) or observed
             frequency (`"nu_obs"`).
+        plot_ax_res : bool, optional
+            Plot residual fluxes? Default: `True`.
 
         """
-
+        
         for l, lrange, s_nu, s_nuerr, uplim, exclude in zip(self.lambda_emit_vals, self.lambda_emit_ranges, self.S_nu_vals, self.S_nu_errs,
                                                             self.cont_uplims, self.cont_excludes):
             if bot_axis == "wl_emit":
@@ -1794,8 +1875,29 @@ class FIR_SED_fit:
             if uplim:
                 self.ax.errorbar(x, s_nu/self.uplim_nsig*self.fd_conv,
                                     marker='_', linestyle="None", color='k', alpha=0.4 if exclude else 0.8, zorder=5)
+            
+            if s_nu / (self.uplim_nsig if uplim else 1) * self.fd_conv < self.F_nu_obs_min:
+                self.F_nu_obs_min = s_nu/(self.uplim_nsig if uplim else 1) * self.fd_conv
+            if s_nu / (self.uplim_nsig if uplim else 1) * self.fd_conv > self.F_nu_obs_max:
+                self.F_nu_obs_max = s_nu/(self.uplim_nsig if uplim else 1) * self.fd_conv
+            
+            if plot_ax_res:
+                # Plot the residuals of the observed spectrum
+                s_nu_model = np.interp(x, self.x, self.S_nu_obs, left=np.nan, right=np.nan)
+                
+                self.ax_res.errorbar(x, (s_nu-s_nu_model)*self.fd_conv, xerr=xrange.reshape(2, 1),
+                                        yerr=0.5*s_nu*self.fd_conv if uplim else s_nuerr*self.fd_conv, uplims=uplim,
+                                        marker='o', linestyle="None", color='k', alpha=0.4 if exclude else 0.8, zorder=5)
+                
+                if not uplim and not exclude:
+                    self.residuals_min.append((s_nu-s_nu_model-1.25*s_nuerr)*self.fd_conv)
+                    self.residuals_max.append((s_nu-s_nu_model+1.25*s_nuerr)*self.fd_conv)
+                
+                if uplim:
+                    self.ax_res.errorbar(x, (s_nu/self.uplim_nsig-s_nu_model)*self.fd_conv,
+                                            marker='_', linestyle="None", color='k', alpha=0.4 if exclude else 0.8, zorder=5)
     
-    def set_axes(self, bot_axis, add_top_axis, set_xrange, set_xlabel, set_ylabel, low_yspace_mult, up_yspace_mult, rowi, coli):
+    def set_axes(self, bot_axis, add_top_axis, set_xrange, set_xlabel, set_ylabel, low_yspace_mult, up_yspace_mult, rowi, coli, plot_ax_res=False):
         """Function for setting up the axes in an SED plot; designed for internal use.
 
         Parameters
@@ -1820,6 +1922,8 @@ class FIR_SED_fit:
             Row number of this plot in a multi-panel figure.
         coli : int
             Column number of this plot in a multi-panel figure.
+        plot_ax_res : bool, optional
+            Plot residual fluxes? Default: `True`.
 
         """
 
@@ -1833,15 +1937,20 @@ class FIR_SED_fit:
                 
             self.top_ax = self.ax.secondary_xaxis("top", functions=functions)
             self.top_ax.tick_params(axis='x', which="both", bottom=False, top=True, labelbottom=False, labeltop=True)
-            self.ax.tick_params(axis="both", which="both", top=False, labelleft=True, labelbottom=True)
+            self.ax.tick_params(axis='x', which="both", top=False, labelbottom=not plot_ax_res)
         elif add_top_axis == "nu_obs":
             if bot_axis == "wl_emit":
                 self.top_ax = self.ax.secondary_xaxis("top", functions=(lambda l_emit: 299.792458/lfunc.lamrf2lamobs(l_emit), lambda nu_obs: lfunc.lamobs2lamrf(299.792458/nu_obs)))
                 self.top_ax.tick_params(axis='x', which="both", bottom=False, top=True, labelbottom=False, labeltop=True)
-                self.ax.tick_params(axis="both", which="both", top=False, labelleft=True, labelbottom=True)
+                self.ax.tick_params(axis='x', which="both", top=False, labelbottom=not plot_ax_res)
             elif bot_axis == "nu_obs":
                 add_top_axis = False
                 self.top_ax = None
+                self.ax.tick_params(axis='x', which="both", top=True, labelbottom=not plot_ax_res)
+
+        if plot_ax_res:
+            # Link x-axis of the two plots
+            self.ax.get_shared_x_axes().join(self.ax, self.ax_res)
 
         self.ax.set_xscale("log")
         self.ax.set_yscale("log")
@@ -1854,6 +1963,9 @@ class FIR_SED_fit:
         
         if np.isfinite(self.F_nu_obs_min) and np.isfinite(self.F_nu_obs_max):
             self.ax.set_ylim(low_yspace_mult*self.F_nu_obs_min, up_yspace_mult*self.F_nu_obs_max)
+        if hasattr(self, "residuals_min") and hasattr(self, "residuals_max"):
+            if np.isfinite(np.min(self.residuals_min)) and np.isfinite(np.max(self.residuals_max)):
+                self.ax_res.set_ylim(np.min(self.residuals_min), np.max(self.residuals_max))
         
         if set_xlabel == "top" or set_xlabel == "both":
             assert add_top_axis in ["wl_obs", "nu_obs"]
@@ -1862,12 +1974,20 @@ class FIR_SED_fit:
             elif add_top_axis == "nu_obs":
                 self.top_ax.set_xlabel(r"$\nu_\mathrm{obs} \, (\mathrm{GHz})$")
         if set_xlabel == "bottom" or set_xlabel == "both":
-            if bot_axis == "wl_emit":
-                self.ax.set_xlabel(r"$\lambda_\mathrm{emit} \, (\mathrm{\mu m})$")
-            elif bot_axis == "nu_obs":
-                self.ax.set_xlabel(r"$\nu_\mathrm{obs} \, (\mathrm{GHz})$")
+            if plot_ax_res:
+                if bot_axis == "wl_emit":
+                    self.ax_res.set_xlabel(r"$\lambda_\mathrm{emit} \, (\mathrm{\mu m})$")
+                elif bot_axis == "nu_obs":
+                    self.ax_res.set_xlabel(r"$\nu_\mathrm{obs} \, (\mathrm{GHz})$")
+            else:
+                if bot_axis == "wl_emit":
+                    self.ax.set_xlabel(r"$\lambda_\mathrm{emit} \, (\mathrm{\mu m})$")
+                elif bot_axis == "nu_obs":
+                    self.ax.set_xlabel(r"$\nu_\mathrm{obs} \, (\mathrm{GHz})$")
         if set_ylabel:
             self.ax.set_ylabel(r"$F_\mathrm{{ \nu, \, obs }} \, (\mathrm{{ {} }})$".format(self.fluxdens_unit.replace("mu", r"\mu ")))
+            if plot_ax_res:
+                self.ax_res.set_ylabel(r"$\Delta F_\mathrm{{ \nu, \, obs }} \, (\mathrm{{ {} }})$".format(self.fluxdens_unit.replace("mu", r"\mu ")))
     
     def save_fig(self, pltfol, fig=None, ptype="constraints", obj_str=None, l0_list=None, single_plot=None):
         """Function for saving a figure; designed for internal use, but can also be used
@@ -1978,4 +2098,37 @@ class FIR_SED_fit:
             lstr = '_' + '_'.join(sorted(set([("scl0" if l0 == "self-consistent" else "l0_{:.0f}".format(l0)) for l0 in l0_list if l0]))) if any(l0_list) else ''
         
         return lstr + ("_beta_{:.1f}".format(self.fixed_beta) if self.fixed_beta else '') + ("_analysis" if analysis and inc_astr else '')
+    
+    def load_rdict(self, l0):
+        """Function to obtain a saved dictionary of results.
+
+        Parameters
+        ----------
+        l0 : {`None`, "self-consistent", float}
+            Opacity model classifiers: `None` for an optically thin model, `"self-consistent"`
+            for a self-consistent opacity model, or a float setting a fixed value of `lambda_0`,
+            the wavelength in micron setting the SED's transition point between optically thin
+            and thick.
+        
+        Returns
+        ----------
+        rdict : dictionary
+            A dictionary containing results of the fitting routine.
+
+        """
+
+        if hasattr(self, "rdict"):
+            rdict = self.rdict
+        else:
+            l0_str, l0_txt = self.get_l0string(l0)
+            rdict_fname = self.mnrfol + "{}_MN_FIR_SED_fit_{}{}.npz".format(self.obj_fn, self.beta_str, l0_str)
+            if os.path.isfile(rdict_fname):
+                rdict = np.load(rdict_fname)
+            else:
+                if self.verbose:
+                    print("Warning: MultiNest results with {}{}".format("β = {:.1f}".format(self.fixed_beta) if self.fixed_beta else "varying β", l0_txt),
+                            "for {} not found! Filename:\n{}\nContinuing...".format(self.obj, rdict_fname.split('/')[-1]))
+                rdict = None
+        
+        return rdict
 

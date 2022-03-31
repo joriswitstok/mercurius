@@ -15,7 +15,7 @@ import numpy as np
 rng = np.random.default_rng(seed=9)
 import math
 
-from scipy.stats import gamma, norm
+from scipy.stats import gamma, norm, gaussian_kde
 from scipy.special import erf
 
 from pymultinest.solve import Solver
@@ -747,7 +747,13 @@ class FIR_SED_fit:
                 rdict["T_uplim_z0"] = inv_CMB_heating(self.z, rdict["T_uplim"], beta_IR)
             
             # Get the normalised spectrum for the best-fit parameters
-            lambda_emit, nu_emit, rdict["S_nu_emit"], rdict["S_nu_obs"] = FIR_SED_spectrum(theta=(np.log10(rdict["M_dust"]), T_dust, beta_IR),
+            data = [logM_dust_samples, T_dust_samples] if self.fixed_beta else [logM_dust_samples, T_dust_samples, np.tile(self.fixed_beta, n_samples), beta_samples]
+            samples = np.vstack([X.ravel() for X in np.meshgrid(*[np.linspace(np.min(d), np.max(d), 100) for d in data])])
+            argmax = gaussian_kde(data).evaluate(samples).argmax()
+            rdict["theta_ML"] = np.concatenate([samples[:, argmax], [self.fixed_beta]]) if self.fixed_beta else samples[:, argmax]
+            # rdict["theta_ML"] = [np.log10(rdict["M_dust"]), T_dust, beta_IR]
+
+            lambda_emit, nu_emit, rdict["S_nu_emit"], rdict["S_nu_obs"] = FIR_SED_spectrum(theta=rdict["theta_ML"],
                                                                                             z=self.z, D_L=self.D_L, l0_dict=l0_dict, lambda_emit=lambda_emit)
             rdict["lambda_emit"] = lambda_emit
             rdict["nu_emit"] = nu_emit
@@ -811,6 +817,7 @@ class FIR_SED_fit:
 
             extra_dim = 3
             names = ["logM_dust", "logL_IR", "logL_FIR", "T_dust", "T_peak"]
+            main_names = ["logM_dust", "T_dust"]
             data = [logM_dust_samples, np.log10(L_IR_Lsun_samples), np.log10(L_FIR_Lsun_samples), T_dust_samples, T_peak_samples]
             del logM_dust_samples, L_IR_Lsun_samples, L_FIR_Lsun_samples, T_dust_samples, T_peak_samples
             
@@ -830,6 +837,7 @@ class FIR_SED_fit:
                 labels.insert(1, r"$\lambda_0$")
             if not self.fixed_beta:
                 names.append("beta")
+                main_names.append("beta")
                 data.append(beta_samples)
                 del beta_samples
                 bins.append(n_bins)
@@ -867,8 +875,8 @@ class FIR_SED_fit:
                     size = "large"
                 text += '\n' + r"$z = {:.6g}$, $T_\mathrm{{ CMB }} = {:.2f} \, \mathrm{{ K }}$".format(self.z, T_CMB_obs*(1.0+self.z))
                 if not np.isnan(self.obj_M):
-                    text += '\n' + r"$M_* = {:.1f}_{{-{:.1f}}}^{{+{:.1f}}} \cdot 10^{{{:d}}} \, \mathrm{{M_\odot}}$".format(self.obj_M/10**int(np.log10(self.obj_M)),
-                                self.obj_M_lowerr/10**int(np.log10(self.obj_M)), self.obj_M_uperr/10**int(np.log10(self.obj_M)), int(np.log10(self.obj_M)))
+                    text += '\n' + r"$M_* = {:.1f}_{{-{:.1f}}}^{{+{:.1f}}} \cdot 10^{{{:d}}} \, \mathrm{{M_\odot}}$".format(self.obj_M/10**math.floor(np.log10(self.obj_M)),
+                                self.obj_M_lowerr/10**math.floor(np.log10(self.obj_M)), self.obj_M_uperr/10**math.floor(np.log10(self.obj_M)), math.floor(np.log10(self.obj_M)))
                 if not np.isnan(self.SFR_UV):
                     text += r", $\mathrm{{ SFR_{{UV}} }} = {:.0f}{}".format(self.SFR_UV, r'' if np.isnan(self.SFR_UV_err) else r" \pm {:.0f}".format(self.SFR_UV_err)) + \
                             r" \, \mathrm{{M_\odot yr^{{-1}}}}$"
@@ -886,6 +894,10 @@ class FIR_SED_fit:
                         axes_c[ri, ci].hlines(np.percentile(data[ri], percentiles), xmin=0, xmax=1,
                                                 transform=axes_c[ri, ci].get_yaxis_transform(), linestyles=['--', '-', '--'], color="grey")
                         axes_c[ri, ci].plot(np.percentile(data[ci], 50), np.percentile(data[ri], 50), color="grey", marker='s', mfc="None", mec="grey")
+
+                        if names[ri] in main_names and names[ci] in main_names:
+                            axes_c[ri, ci].plot(rdict["theta_ML"][main_names.index(names[ci])], rdict["theta_ML"][main_names.index(names[ri])],
+                                                color='k', marker='o', mfc="None", mec='k', mew=1.5)
                 
                 ax_c = axes_c[names.index("T_peak"), names.index("T_dust")]
                 ax_c.plot(np.linspace(-10, 200, 10), np.linspace(-10, 200, 10), linestyle='--', color="lightgrey", alpha=0.6)
@@ -949,9 +961,9 @@ class FIR_SED_fit:
 
         """
 
-        M_dust_log10 = int(np.log10(rdict["M_dust"]))
-        L_IR_log10 = int(np.log10(rdict["L_IR_Lsun"]))
-        L_FIR_log10 = int(np.log10(rdict["L_FIR_Lsun"]))
+        M_dust_log10 = math.floor(np.log10(rdict["M_dust"]))
+        L_IR_log10 = math.floor(np.log10(rdict["L_IR_Lsun"]))
+        L_FIR_log10 = math.floor(np.log10(rdict["L_FIR_Lsun"]))
 
         print("\nFreshly {} MultiNest estimates of {}".format(rtype, self.obj))
         print("(with {}{}):".format("β = {:.1f}".format(self.fixed_beta) if self.fixed_beta else "varying β", l0_txt))
@@ -1096,7 +1108,7 @@ class FIR_SED_fit:
                     create_fig = False
             elif fig is None:
                 fig = ax.get_figure()
-                if plot_ax_res and ax_res is None:
+                if plot_ax_res and not isinstance(ax_res, matplotlib.axes.Axes):
                     # Restructure gridspec layout to fit in residual axes
                     gs = fig.add_gridspec(nrows=2, ncols=1, hspace=0, height_ratios=height_ratios)
                     ax.set_position(gs[0].get_position(fig))
@@ -1109,7 +1121,7 @@ class FIR_SED_fit:
                 else:
                     ax = fig.add_subplot()
             else:
-                if plot_ax_res and ax_res is None:
+                if plot_ax_res and not isinstance(ax_res, matplotlib.axes.Axes):
                     # Restructure gridspec layout to fit in residual axes
                     gs_orig = ax.get_gridspec()
                     gs = fig.add_gridspec(nrows=2*gs_orig._nrows, ncols=gs_orig._ncols, height_ratios=gs_orig._nrows*height_ratios)
@@ -1133,7 +1145,7 @@ class FIR_SED_fit:
             if rdict is None:
                 continue
             
-            M_dust_log10 = int(np.log10(rdict["M_dust"]))
+            M_dust_log10 = math.floor(np.log10(rdict["M_dust"]))
             T_dust = rdict["T_dust"]
             dcolor = dust_cmap(dust_norm(T_dust))
             
@@ -1181,8 +1193,8 @@ class FIR_SED_fit:
             if np.max(y2[(lambda_emit >= max(20, self.l_min)) * (lambda_emit <= min(1e3, self.l_max))]) * self.fd_conv > self.F_nu_obs_max:
                 self.F_nu_obs_max = np.nanmax(y2[(lambda_emit >= max(20, self.l_min)) * (lambda_emit <= min(1e3, self.l_max))]) * self.fd_conv
             
-            M_dust_log10 = int(np.log10(rdict["M_dust"]))
-            L_IR_log10 = int(np.log10(rdict["L_IR_Lsun"]))
+            M_dust_log10 = math.floor(np.log10(rdict["M_dust"]))
+            L_IR_log10 = math.floor(np.log10(rdict["L_IR_Lsun"]))
             
             if not self.fresh_calculation[l0]:
                 if self.verbose:
@@ -1549,7 +1561,7 @@ class FIR_SED_fit:
 
                     rdict["L_IR_uplim"] = uplim
                     rdict["L_IR_Lsun"], rdict["L_IR_Lsun_lowerr"], rdict["L_IR_Lsun_uperr"] = L_IR_Lsun, L_IR_Lsun_lowerr, L_IR_Lsun_uperr
-                    L_IR_log10 = int(np.log10(rdict["L_IR_Lsun"]))
+                    L_IR_log10 = math.floor(np.log10(rdict["L_IR_Lsun"]))
                     rdict["L_FIR_Lsun"], rdict["L_FIR_Lsun_lowerr"], rdict["L_FIR_Lsun_uperr"] = L_FIR_Lsun, L_FIR_Lsun_lowerr, L_FIR_Lsun_uperr
 
                     rdict["SFR_IR"] = SFR_L(rdict["L_IR_Lsun"] * L_sun_ergs, band="TIR")
@@ -1626,8 +1638,8 @@ class FIR_SED_fit:
 
             if any_compatible_betas and annotate_results:
                 # Annotate results of L_IR
-                L_IR_log10 = int(np.log10(np.min([L_IR_Lsun_betas[0], L_IR_Lsun_betas[-1]])))
-                L_FIR_log10 = int(np.log10(np.min([L_FIR_Lsun_betas[0], L_FIR_Lsun_betas[-1]])))
+                L_IR_log10 = math.floor(np.log10(np.min([L_IR_Lsun_betas[0], L_IR_Lsun_betas[-1]])))
+                L_FIR_log10 = math.floor(np.log10(np.min([L_FIR_Lsun_betas[0], L_FIR_Lsun_betas[-1]])))
                 text = r"$L_\mathrm{{ IR }} {} ( {:.1f}$-${:.1f} )".format('=' if np.sum(self.cont_det) > 0 else r"\leq",
                         *np.sort([L_IR_Lsun_betas[0], L_IR_Lsun_betas[-1]])/10**L_IR_log10) + \
                             r"\cdot 10^{{ {:d} }} \, \mathrm{{ L_\odot }}$".format(L_IR_log10)
@@ -1676,9 +1688,9 @@ class FIR_SED_fit:
             if save_results:
                 print("\nFiducial results (T_dust = {:.0f} K, beta_IR = {:.2g}) for {}:".format(fixed_T_dust, fixed_beta, self.obj), end='')
                 if fixed_vals_cb:
-                    M_dust_log10 = int(np.log10(rdict["M_dust"]))
-                    L_IR_log10 = int(np.log10(rdict["L_IR_Lsun"]))
-                    L_FIR_log10 = int(np.log10(rdict["L_FIR_Lsun"]))
+                    M_dust_log10 = math.floor(np.log10(rdict["M_dust"]))
+                    L_IR_log10 = math.floor(np.log10(rdict["L_IR_Lsun"]))
+                    L_FIR_log10 = math.floor(np.log10(rdict["L_FIR_Lsun"]))
 
                     valstr = lambda fmt, *vals: "< {}{:{fmt}}{}".format(vals[0], vals[1], vals[-1], fmt=fmt) if uplim \
                                             else "= {}{:{fmt}} -{:{fmt}} +{:{fmt}}{}".format(*vals, fmt=fmt)
@@ -1726,8 +1738,8 @@ class FIR_SED_fit:
 
         text = r"$z = {:.6g}$, $T_\mathrm{{ CMB }} = {:.2f} \, \mathrm{{ K }}$".format(self.z, T_CMB_obs*(1.0+self.z))
         if not np.isnan(self.obj_M):
-            text += '\n' + r"$M_* = {:.1f}_{{-{:.1f}}}^{{+{:.1f}}} \cdot 10^{{{:d}}} \, \mathrm{{M_\odot}}$".format(self.obj_M/10**int(np.log10(self.obj_M)),
-                        self.obj_M_lowerr/10**int(np.log10(self.obj_M)), self.obj_M_uperr/10**int(np.log10(self.obj_M)), int(np.log10(self.obj_M)))
+            text += '\n' + r"$M_* = {:.1f}_{{-{:.1f}}}^{{+{:.1f}}} \cdot 10^{{{:d}}} \, \mathrm{{M_\odot}}$".format(self.obj_M/10**math.floor(np.log10(self.obj_M)),
+                        self.obj_M_lowerr/10**math.floor(np.log10(self.obj_M)), self.obj_M_uperr/10**math.floor(np.log10(self.obj_M)), math.floor(np.log10(self.obj_M)))
         if not np.isnan(self.SFR_UV):
             text += '\n' + r"$\mathrm{{ SFR_{{UV}} }} = {:.0f}{}".format(self.SFR_UV, r'' if np.isnan(self.SFR_UV_err) else r" \pm {:.0f}".format(self.SFR_UV_err)) + \
                     r" \, \mathrm{{M_\odot yr^{{-1}}}}$"
@@ -1754,9 +1766,9 @@ class FIR_SED_fit:
 
         """
 
-        M_dust_log10 = int(np.log10(rdict["M_dust"]))
-        L_IR_log10 = int(np.log10(rdict["L_IR_Lsun"]))
-        L_FIR_log10 = int(np.log10(rdict["L_FIR_Lsun"]))
+        M_dust_log10 = math.floor(np.log10(rdict["M_dust"]))
+        L_IR_log10 = math.floor(np.log10(rdict["L_IR_Lsun"]))
+        L_FIR_log10 = math.floor(np.log10(rdict["L_FIR_Lsun"]))
         
         if self.valid_cont_area:
             Sigma_sign = '>' if self.cont_area_uplim else '='

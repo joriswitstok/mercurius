@@ -716,7 +716,7 @@ class FIR_SED_fit:
             else:
                 M_star_samples = mcmc_sampler([self.obj_M], [[(0.5*(self.obj_M_lowerr+self.obj_M_uperr))**2]],
                                                 n_dim=1, n_steps=2500, nwalkers=32)[:, 0]
-                dust_frac_samples = 10**logM_dust_samples/rng.choice(M_star_samples, size=logM_dust_samples.size, replace=True)
+                dust_frac_samples = np.clip(10**logM_dust_samples/rng.choice(M_star_samples, size=logM_dust_samples.size, replace=True), 0, 1)
                 dust_frac_perc = np.percentile(dust_frac_samples, percentiles, axis=0)
                 del M_star_samples, dust_frac_samples
             
@@ -747,7 +747,7 @@ class FIR_SED_fit:
                 rdict["T_uplim_z0"] = inv_CMB_heating(self.z, rdict["T_uplim"], beta_IR)
             
             # Get the normalised spectrum for the best-fit parameters
-            data = [logM_dust_samples, T_dust_samples] if self.fixed_beta else [logM_dust_samples, T_dust_samples, np.tile(self.fixed_beta, n_samples), beta_samples]
+            data = [logM_dust_samples, T_dust_samples] if self.fixed_beta else [logM_dust_samples, T_dust_samples, beta_samples]
             samples = np.vstack([X.ravel() for X in np.meshgrid(*[np.linspace(np.min(d), np.max(d), 100) for d in data])])
             argmax = gaussian_kde(data).evaluate(samples).argmax()
             rdict["theta_ML"] = np.concatenate([samples[:, argmax], [self.fixed_beta]]) if self.fixed_beta else samples[:, argmax]
@@ -1901,9 +1901,9 @@ class FIR_SED_fit:
                                         yerr=0.5*s_nu*self.fd_conv if uplim else s_nuerr*self.fd_conv, uplims=uplim,
                                         marker='o', linestyle="None", color='k', alpha=0.4 if exclude else 0.8, zorder=5)
                 
-                if not uplim and not exclude:
-                    self.residuals_min.append((s_nu-s_nu_model-1.25*s_nuerr)*self.fd_conv)
-                    self.residuals_max.append((s_nu-s_nu_model+1.25*s_nuerr)*self.fd_conv)
+                if not exclude:
+                    self.residuals_min.append((s_nu-s_nu_model-(2 if uplim else 1.25)*s_nuerr)*self.fd_conv)
+                    self.residuals_max.append((s_nu-s_nu_model+(2 if uplim else 1.25)*s_nuerr)*self.fd_conv)
                 
                 if uplim:
                     self.ax_res.errorbar(x, (s_nu/self.uplim_nsig-s_nu_model)*self.fd_conv,

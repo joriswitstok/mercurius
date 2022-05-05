@@ -714,11 +714,15 @@ class FIR_SED_fit:
             if np.isnan(self.obj_M):
                 dust_frac_perc = np.tile(np.nan, len(percentiles))
             else:
-                M_star_samples = mcmc_sampler([self.obj_M], [[(0.5*(self.obj_M_lowerr+self.obj_M_uperr))**2]],
-                                                n_dim=1, n_steps=2500, nwalkers=32)[:, 0]
-                dust_frac_samples = np.clip(10**logM_dust_samples/rng.choice(M_star_samples, size=logM_dust_samples.size, replace=True), 0, 1)
+                if np.isnan(self.obj_M_lowerr) or np.isnan(self.obj_M_uperr):
+                    dust_frac_samples = logM_dust_samples/self.obj_M
+                else:
+                    M_star_samples = mcmc_sampler([self.obj_M], [[(0.5*(self.obj_M_lowerr+self.obj_M_uperr))**2]],
+                                                    n_dim=1, n_steps=2500, nwalkers=32)[:, 0]
+                    dust_frac_samples = np.clip(10**logM_dust_samples/rng.choice(M_star_samples, size=logM_dust_samples.size, replace=True), 0, 1)
+                    del M_star_samples
                 dust_frac_perc = np.percentile(dust_frac_samples, percentiles, axis=0)
-                del M_star_samples, dust_frac_samples
+                del dust_frac_samples
             
             rdict["dust_frac"], rdict["dust_frac_lowerr"], rdict["dust_frac_uperr"] = dust_frac_perc[1], *np.diff(dust_frac_perc)
             rdict["dust_yield_AGB"], rdict["dust_yield_AGB_lowerr"], rdict["dust_yield_AGB_uperr"] = 29 * np.array([rdict["dust_frac"],

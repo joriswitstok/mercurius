@@ -129,7 +129,7 @@ A MultiNest fit for each the opacity models in `f.l0_list` can be initiated with
 
 ```python
 f.fit_data(pltfol=pltfol, fit_uplims=True, n_live_points=2000, evidence_tolerance=0.001,
-            force_run=False, remove_mnfiles=True, mnverbose=False)
+            force_run=False, mnverbose=False)
 ```
 
 Since `pltfol` is specified in the call to `fit_data`, the posterior distributions will be shown in a figure produced with the `corner` module:

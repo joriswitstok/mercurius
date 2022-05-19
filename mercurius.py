@@ -752,9 +752,11 @@ class FIR_SED_fit:
             
             # Get the normalised spectrum for the best-fit parameters
             data = [logM_dust_samples, T_dust_samples] if self.fixed_beta else [logM_dust_samples, T_dust_samples, beta_samples]
-            samples = np.vstack([X.ravel() for X in np.meshgrid(*[np.linspace(np.min(d), np.max(d), 100) for d in data])])
-            argmax = gaussian_kde(data).evaluate(samples).argmax()
-            rdict["theta_ML"] = np.concatenate([samples[:, argmax], [self.fixed_beta]]) if self.fixed_beta else samples[:, argmax]
+            H, edges = np.histogramdd(data, bins=50, range=[np.percentile(d, [5, 95]) for d in data])
+            argmax = np.unravel_index(H.argmax(), H.shape)
+            rdict["theta_ML"] = np.array([np.mean([edges[ai][a:a+2]]) for ai, a in enumerate(argmax)])
+            if self.fixed_beta:
+                rdict["theta_ML"] = np.append(rdict["theta_ML"], self.fixed_beta)
             # rdict["theta_ML"] = [np.log10(rdict["M_dust"]), T_dust, beta_IR]
 
             lambda_emit, nu_emit, rdict["S_nu_emit"], rdict["S_nu_obs"] = FIR_SED_spectrum(theta=rdict["theta_ML"],
@@ -804,7 +806,9 @@ class FIR_SED_fit:
                                                             l0_dict=l0_dict, lambda_emit=lambda_emit)[3] for sample in flat_samples])
             del flat_samples
             
-            rdict["y1"], rdict["y2"] = np.percentile(S_nu_obs_samples, [0.5*(100-68.2689), 0.5*(100+68.2689)], axis=0)
+            S_nu_obs_median = np.median(S_nu_obs_samples, axis=0)
+            rdict["S_nu_obs_lowerr"] = S_nu_obs_median - np.percentile(S_nu_obs_samples, 0.5*(100-68.2689), axis=0)
+            rdict["S_nu_obs_uperr"] = np.percentile(S_nu_obs_samples, 0.5*(100+68.2689), axis=0) - S_nu_obs_median
             
             del S_nu_obs_samples
 
@@ -1160,9 +1164,8 @@ class FIR_SED_fit:
                 nu_obs = 299792.458 / lambda_emit / (1.0 + self.z) # GHz (lambda_emit is in micron)
                 self.x = nu_obs
             self.S_nu_obs = rdict["S_nu_obs"]
-
-            y1 = rdict["y1"]
-            y2 = rdict["y2"]
+            S_nu_obs_lowerr = rdict["S_nu_obs_lowerr"]
+            S_nu_obs_uperr = rdict["S_nu_obs_uperr"]
             
             # Plot the observed spectrum (intrinsic spectrum is nearly the same apart from at the very red wavelengths above ~100 micron)
             ax.plot(self.x, self.S_nu_obs*self.fd_conv, linewidth=1.5,
@@ -1184,18 +1187,19 @@ class FIR_SED_fit:
                             arrowprops={"arrowstyle": '-', "shrinkA": 0, "shrinkB": 0, "color": dcolor, "alpha": 0.8},
                             zorder=6).set_bbox(dict(boxstyle="Round, pad=0.1", linestyle=self.l0_linestyles.get(l0, '-'), facecolor='w', edgecolor=dcolor, alpha=0.8))
             
-            ax.fill_between(self.x, y1=y1*self.fd_conv, y2=y2*self.fd_conv, facecolor=dcolor, edgecolor="None", alpha=0.1)
+            ax.fill_between(self.x, y1=(self.S_nu_obs-S_nu_obs_lowerr)*self.fd_conv, y2=(self.S_nu_obs+S_nu_obs_uperr)*self.fd_conv,
+                            facecolor=dcolor, edgecolor="None", alpha=0.1)
             
             if plot_ax_res:
                 # Plot the residuals of the observed spectrum
-                ax_res.fill_between(self.x, y1=(y1-self.S_nu_obs)*self.fd_conv, y2=(y2-self.S_nu_obs)*self.fd_conv, facecolor=dcolor, edgecolor="None", alpha=0.1)
-                self.residuals_min.append(np.min((1.25*y1-self.S_nu_obs)*self.fd_conv))
-                self.residuals_max.append(np.max((1.25*y2-self.S_nu_obs)*self.fd_conv))
+                ax_res.fill_between(self.x, y1=-S_nu_obs_lowerr*self.fd_conv, y2=S_nu_obs_uperr*self.fd_conv, facecolor=dcolor, edgecolor="None", alpha=0.1)
+                self.residuals_min.append(np.min(-1.25*S_nu_obs_lowerr[(lambda_emit >= max(20, self.l_min)) * (lambda_emit <= min(1e3, self.l_max))]*self.fd_conv))
+                self.residuals_max.append(np.max(1.25*S_nu_obs_uperr[(lambda_emit >= max(20, self.l_min)) * (lambda_emit <= min(1e3, self.l_max))]*self.fd_conv))
             
-            # if np.min(y1[(lambda_emit >= max(20, self.l_min)) * (lambda_emit <= min(1e3, self.l_max))]) * self.fd_conv < self.F_nu_obs_min:
-            #     self.F_nu_obs_min = np.nanmin(y1[(lambda_emit >= max(20, self.l_min)) * (lambda_emit <= min(1e3, self.l_max))]) * self.fd_conv
-            if np.max(y2[(lambda_emit >= max(20, self.l_min)) * (lambda_emit <= min(1e3, self.l_max))]) * self.fd_conv > self.F_nu_obs_max:
-                self.F_nu_obs_max = np.nanmax(y2[(lambda_emit >= max(20, self.l_min)) * (lambda_emit <= min(1e3, self.l_max))]) * self.fd_conv
+            # if np.min((self.S_nu_obs-S_nu_obs_lowerr)[(lambda_emit >= max(20, self.l_min)) * (lambda_emit <= min(1e3, self.l_max))]) * self.fd_conv < self.F_nu_obs_min:
+            #     self.F_nu_obs_min = np.nanmin((self.S_nu_obs-S_nu_obs_lowerr)[(lambda_emit >= max(20, self.l_min)) * (lambda_emit <= min(1e3, self.l_max))]) * self.fd_conv
+            if np.max((self.S_nu_obs+S_nu_obs_uperr)[(lambda_emit >= max(20, self.l_min)) * (lambda_emit <= min(1e3, self.l_max))]) * self.fd_conv > self.F_nu_obs_max:
+                self.F_nu_obs_max = np.nanmax((self.S_nu_obs+S_nu_obs_uperr)[(lambda_emit >= max(20, self.l_min)) * (lambda_emit <= min(1e3, self.l_max))]) * self.fd_conv
             
             M_dust_log10 = math.floor(np.log10(rdict["M_dust"]))
             L_IR_log10 = math.floor(np.log10(rdict["L_IR_Lsun"]))

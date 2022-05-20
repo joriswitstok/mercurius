@@ -715,7 +715,7 @@ class FIR_SED_fit:
                 dust_frac_perc = np.tile(np.nan, len(percentiles))
             else:
                 if np.isnan(self.obj_M_lowerr) or np.isnan(self.obj_M_uperr):
-                    dust_frac_samples = logM_dust_samples/self.obj_M
+                    dust_frac_samples = 10**logM_dust_samples/self.obj_M
                 else:
                     M_star_samples = mcmc_sampler([self.obj_M], [[(0.5*(self.obj_M_lowerr+self.obj_M_uperr))**2]],
                                                     n_dim=1, n_steps=2500, nwalkers=32)[:, 0]

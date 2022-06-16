@@ -1746,8 +1746,10 @@ class FIR_SED_fit:
 
         text = r"$z = {:.6g}$, $T_\mathrm{{ CMB }} = {:.2f} \, \mathrm{{ K }}$".format(self.z, T_CMB_obs*(1.0+self.z))
         if not np.isnan(self.obj_M):
-            text += '\n' + r"$M_* = {:.1f}_{{-{:.1f}}}^{{+{:.1f}}} \cdot 10^{{{:d}}} \, \mathrm{{M_\odot}}$".format(self.obj_M/10**math.floor(np.log10(self.obj_M)),
-                        self.obj_M_lowerr/10**math.floor(np.log10(self.obj_M)), self.obj_M_uperr/10**math.floor(np.log10(self.obj_M)), math.floor(np.log10(self.obj_M)))
+            text += '\n' + r"$M_* = {:.1f}".format(self.obj_M/10**math.floor(np.log10(self.obj_M)))
+            if not np.isnan(self.obj_M_lowerr) and not np.isnan(self.obj_M_uperr):
+                text += r"_{{-{:.1f}}}^{{+{:.1f}}}".format(self.obj_M_lowerr/10**math.floor(np.log10(self.obj_M)), self.obj_M_uperr/10**math.floor(np.log10(self.obj_M)))
+            text += r" \cdot 10^{{{:d}}} \, \mathrm{{M_\odot}}$".format(math.floor(np.log10(self.obj_M)))
         if not np.isnan(self.SFR_UV):
             text += '\n' + r"$\mathrm{{ SFR_{{UV}} }} = {:.0f}{}".format(self.SFR_UV, r'' if np.isnan(self.SFR_UV_err) else r" \pm {:.0f}".format(self.SFR_UV_err)) + \
                     r" \, \mathrm{{M_\odot yr^{{-1}}}}$"

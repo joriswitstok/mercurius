@@ -118,7 +118,7 @@ for l0 in f.l0_list:
     f.plot_ranges(l0=l0, save_results=False, pltfol=pltfol)
 ```
 
-This creates the figure below, in which the various coloured greybody curves indicate that out of the default range of dust temperatures (starting at 20 K, increasing in steps of 10 K up to 110 K; note this can be adjusted in the call to `plot_ranges` with the optional keyword `T_dusts`), only 40 K is compatible with the photometric data points for certain dust emissivities (similarly specified by the optional keyword `beta_IRs`, by default a range between 1.5 and 2 with steps of 0.1):
+This creates the figure below, in which the various coloured greybody curves indicate that out of the default range of dust temperatures (starting at 20 K, increasing in steps of 10 K up to 110 K; note this can be adjusted in the call to `plot_ranges` with the optional keyword `T_dusts`), only 40 K and 50 K are compatible with the photometric data points for certain dust emissivities (similarly specified by the optional keyword `beta_IRs`, by default a range between 1.5 and 2 with steps of 0.1):
 <br>
 <img src="/test/MN_plots/FIR_SED_ranges_A1689-zD1_analysis.png" width="800">
 <br>
@@ -128,8 +128,7 @@ This creates the figure below, in which the various coloured greybody curves ind
 A MultiNest fit for each the opacity models in `f.l0_list` can be initiated with `fit_data` (although `fit_uplims=True` here, there are no upper limits to be taken into account):
 
 ```python
-f.fit_data(pltfol=pltfol, fit_uplims=True, n_live_points=2000, evidence_tolerance=0.001,
-            force_run=False, mnverbose=False)
+f.fit_data(pltfol=pltfol, fit_uplims=True, n_live_points=2000, force_run=False, mnverbose=False)
 ```
 
 Since `pltfol` is specified in the call to `fit_data`, the posterior distributions will be shown in a figure produced with the `corner` module:

@@ -351,7 +351,7 @@ class FIR_SED_fit:
             self.l_min = l_min
         if l_max is None:
             # Plot to rest-frame wavelength of 300 μm
-            self.l_max = 300 # micron
+            self.l_max = 500 # micron
         else:
             self.l_max = l_max
         
@@ -1436,7 +1436,7 @@ class FIR_SED_fit:
                     if self.analysis and np.any(CMB_correction_factor < 0.9):
                         # Show where the correction is 90%
                         ax.axvline(x=x[np.argmin(np.abs(CMB_correction_factor - 0.9))], linestyle='--', color=dcolor, alpha=0.8)
-                        if di == 2 and bi == 0:
+                        if di == 4 and bi == 0:
                             ax.annotate(text="10% CMB background", xy=(x[np.argmin(np.abs(CMB_correction_factor - 0.9))], 1), xytext=(-4, -4),
                                         xycoords=ax.get_xaxis_transform(), textcoords="offset points", rotation="vertical",
                                         va="top", ha="right", size="x-small", color=dcolor, alpha=0.8)

@@ -1011,7 +1011,8 @@ class FIR_SED_fit:
     def plot_MN_fit(self, l0_list=None, fig=None, ax=None, ax_res=None, pltfol=None, obj_str=None, single_plot=None,
                     annotate_title=True, plot_data=True, bot_axis="wl_emit", add_top_axis="wl_obs",
                     set_xrange=True, set_xlabel="both", set_ylabel=True, low_yspace_mult=0.05, up_yspace_mult=4,
-                    ann_size="small", show_T_peak=False, leg_framealpha=0, rowi=0, coli=0):
+                    ann_size="small", show_T_peak=False, leg_labels=["M_dust", "T_dust", "L_IR", "SFR_IR"],
+                    leg_location="lower center", leg_ncol=None, leg_framealpha=0, rowi=0, coli=0):
         """Function for plotting the results of a MultiNest fit.
 
         Parameters
@@ -1069,6 +1070,15 @@ class FIR_SED_fit:
         show_T_peak : {`False`, `"all"`, `None`, `"self-consistent"`, float}, optional
             Indicate the peak temperature on the plot for all (`"all"`) or only one specific opacity
             model classifier (see `l0_list` for details)? Default is `False`, where it is not indicated.
+        leg_labels : list, optional
+            List of properties shown in the labels of the legend. Allowed items are `"M_dust"`,
+            `"T_dust"`, `"L_IR"`, `"SFR_IR"`, and `"beta_IR"`.
+        leg_location : str or pair of floats, optional
+            Location of the legend (see `matplotlib` for allowed values). Default is taken from
+            `plt.rcParams`.
+        leg_ncol : {`None`, int}, optional
+            Number of columns in the legend. Default is `None`, in which case the length of
+            `l0_list` is used.
         leg_framealpha : float, optional
             Alpha value used by `matplotlib` for the frame of the legend. Default is `None`, in which
             case the value is taken from `plt.rcParams`.
@@ -1094,6 +1104,8 @@ class FIR_SED_fit:
             single_plot = not self.analysis
         if single_plot:
             handles = []
+        if leg_ncol is None:
+            leg_ncol = len(l0_list)
         if leg_framealpha is None:
             leg_framealpha = plt.rcParams["legend.framealpha"]
         
@@ -1212,27 +1224,31 @@ class FIR_SED_fit:
                 self.annotate_results(rdict, [ax, ax], ax_type="regular", ann_size=ann_size)
             else:
                 if l0 == "self-consistent":
-                    l0_lab = l0.capitalize() + '\n' + r"$\lambda_0 = {:.1f}_{{ -{:.1f} }}^{{ +{:.1f} }} \, \mathrm{{ \mu m }}$".format(rdict["lambda_0"],
+                    l0_lab = l0.capitalize() + '\n' + r"$\lambda_0 = {:.0f}_{{ -{:.0f} }}^{{ +{:.0f} }} \, \mathrm{{ \mu m }}$".format(rdict["lambda_0"],
                                                                                                     rdict["lambda_0_lowerr"], rdict["lambda_0_uperr"])
                 else:
                     l0_lab = "Fixed: " + r"$\lambda_0 = {:.0f} \, \mathrm{{ \mu m }}$".format(l0) if l0 else "Optically thin"
                     if not np.isnan(rdict["lambda_0"]):
                         l0_lab += '\n' + r"$\lambda_0^\mathrm{{AP}} = {:.1f} \, \mathrm{{ \mu m }}$".format(rdict["lambda_0"])
                 
-                label = '\n'.join([l0_lab,
-                                    r"$M_\mathrm{{ dust }} = {:.{prec}f}_{{ -{:.{prec}f} }}^{{ +{:.{prec}f} }} \cdot 10^{{ {:d} }} \, \mathrm{{ M_\odot }}$".format(rdict["M_dust"]/10**M_dust_log10,
-                                            rdict["M_dust_lowerr"]/10**M_dust_log10, rdict["M_dust_uperr"]/10**M_dust_log10, M_dust_log10,
-                                            prec=1 if (rdict["M_dust"]-rdict["M_dust_lowerr"])/10**M_dust_log10 < 1 else 0),
-                                    r"$T_\mathrm{{ dust }} = {:.0f}_{{ -{:.0f} }}^{{ +{:.0f} }} \, \mathrm{{ K }}$".format(T_dust,
-                                            rdict["T_dust_lowerr"], rdict["T_dust_uperr"]),
-                                    r"$L_\mathrm{{ IR }} = {:.1f}_{{ -{:.1f} }}^{{ +{:.1f} }} \cdot 10^{{ {:d} }} \, \mathrm{{ L_\odot }}$".format(rdict["L_IR_Lsun"]/10**L_IR_log10,
-                                            rdict["L_IR_Lsun_lowerr"]/10**L_IR_log10, rdict["L_IR_Lsun_uperr"]/10**L_IR_log10, L_IR_log10),
-                                    r"$\mathrm{{ SFR_{{IR}} }} = {:.0f}_{{ -{:.0f} }}^{{ +{:.0f} }} \, \mathrm{{ M_\odot \, yr^{{-1}} }}$".format(rdict["SFR_IR"],
-                                            *rdict["SFR_IR_err"])])
+                fmt = lambda val, lowerr: "0f" if val > 2 and float("{:.0f}".format(lowerr)) and float("{:.0f}".format(val))-float("{:.0f}".format(lowerr)) > 0 else "{}f".format(max(0, 1-int(np.log10(lowerr))))
+                leg_label_dict = {
+                    "M_dust": r"$M_\mathrm{{ dust }} = {:.{prec}f}_{{ -{:.{prec}f} }}^{{ +{:.{prec}f} }} \cdot 10^{{ {:d} }} \, \mathrm{{ M_\odot }}$".format(rdict["M_dust"]/10**M_dust_log10,
+                            rdict["M_dust_lowerr"]/10**M_dust_log10, rdict["M_dust_uperr"]/10**M_dust_log10, M_dust_log10,
+                            prec=1 if (rdict["M_dust"]-rdict["M_dust_lowerr"])/10**M_dust_log10 < 1 else 0),
+                    "T_dust": r"$T_\mathrm{{ dust }} = {:.{fmt}}_{{-{:.{fmt}}}}^{{+{:.{fmt}}}} \, \mathrm{{ K }}$".format(T_dust,
+                            rdict["T_dust_lowerr"], rdict["T_dust_uperr"], fmt=fmt(T_dust, lowerr=rdict["T_dust_lowerr"])),
+                    "L_IR": r"$L_\mathrm{{ IR }} = {:.1f}_{{ -{:.1f} }}^{{ +{:.1f} }} \cdot 10^{{ {:d} }} \, \mathrm{{ L_\odot }}$".format(rdict["L_IR_Lsun"]/10**L_IR_log10,
+                            rdict["L_IR_Lsun_lowerr"]/10**L_IR_log10, rdict["L_IR_Lsun_uperr"]/10**L_IR_log10, L_IR_log10),
+                    "SFR_IR": r"$\mathrm{{ SFR_{{IR}} }} = {:.0f}_{{ -{:.0f} }}^{{ +{:.0f} }} \, \mathrm{{ M_\odot \, yr^{{-1}} }}$".format(rdict["SFR_IR"],
+                            *rdict["SFR_IR_err"])}
                 
-                if not self.fixed_beta:
-                    label += '\n' + r"$\beta_\mathrm{{ IR }} = {:.1f}_{{ -{:.1f} }}^{{ +{:.1f} }}$".format(rdict["beta_IR"],
-                                        rdict["beta_IR_lowerr"], rdict["beta_IR_uperr"])
+                label = '\n'.join([l0_lab] + [leg_label_dict.get(leg_label, '') for leg_label in leg_labels if leg_label != "beta_IR"])
+                
+                if not self.fixed_beta and "beta_IR" in leg_labels:
+                    fmt = lambda val, lowerr: "0f" if val > 2 and float("{:.0f}".format(lowerr)) and float("{:.0f}".format(val))-float("{:.0f}".format(lowerr)) > 0 else "{}f".format(max(0, 1-int(np.log10(lowerr))))
+                    label += '\n' + r"$\beta_\mathrm{{ IR }} = {:.{fmt}}_{{-{:.{fmt}}}}^{{+{:.{fmt}}}}$".format(rdict["beta_IR"],
+                                        rdict["beta_IR_lowerr"], rdict["beta_IR_uperr"], fmt=fmt(rdict["beta_IR"], rdict["beta_IR_lowerr"]))
                 if single_plot:
                     handles.append(BTuple(([dcolor], [0.1], 1.5, self.l0_linestyles.get(l0, '-'), dcolor, 0.8), label + '\n'))
 
@@ -1244,7 +1260,7 @@ class FIR_SED_fit:
                     self.save_fig(pltfol=pltfol, ptype="MN_fit", l0_list=[l0], single_plot=single_plot)
         
         if single_plot:
-            leg = ax.legend(handles=handles, handler_map={BTuple: BTupleHandler()}, ncol=len(self.l0_list), loc="lower center",
+            leg = ax.legend(handles=handles, handler_map={BTuple: BTupleHandler()}, ncol=leg_ncol, loc=leg_location,
                             handlelength=0.7*plt.rcParams["legend.handlelength"], handleheight=5*plt.rcParams["legend.handleheight"],
                             columnspacing=0.3*plt.rcParams["legend.columnspacing"], framealpha=leg_framealpha)
             
@@ -1956,15 +1972,15 @@ class FIR_SED_fit:
                 functions = (lfunc.lamrf2lamobs, lfunc.lamobs2lamrf)
             elif bot_axis == "nu_obs":
                 functions = (lfunc.nuobs2lamobs, lfunc.lamobs2nuobs)
-                
+            
             self.top_ax = self.ax.secondary_xaxis("top", functions=functions)
             self.top_ax.tick_params(axis='x', which="both", bottom=False, top=True, labelbottom=False, labeltop=True)
-            self.ax.tick_params(axis='x', which="both", top=False, labelbottom=not plot_ax_res)
+            self.ax.tick_params(axis='x', which="both", direction="in", top=False, labelbottom=not plot_ax_res)
         elif add_top_axis == "nu_obs":
             if bot_axis == "wl_emit":
                 self.top_ax = self.ax.secondary_xaxis("top", functions=(lambda l_emit: 299.792458/lfunc.lamrf2lamobs(l_emit), lambda nu_obs: lfunc.lamobs2lamrf(299.792458/nu_obs)))
                 self.top_ax.tick_params(axis='x', which="both", bottom=False, top=True, labelbottom=False, labeltop=True)
-                self.ax.tick_params(axis='x', which="both", top=False, labelbottom=not plot_ax_res)
+                self.ax.tick_params(axis='x', which="both", direction="in", top=False, labelbottom=not plot_ax_res)
             elif bot_axis == "nu_obs":
                 add_top_axis = False
                 self.top_ax = None

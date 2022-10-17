@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Script for IR luminosities from continuum detections (with e.g. ALMA).
+Functions to compute IR luminosities from continuum detections (with e.g. ALMA).
 
 Joris Witstok, 11 February 2021
 """

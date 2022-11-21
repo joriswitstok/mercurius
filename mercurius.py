@@ -15,7 +15,7 @@ import numpy as np
 rng = np.random.default_rng(seed=9)
 import math
 
-from scipy.stats import gamma, norm, gaussian_kde
+from scipy.stats import gamma, norm
 from scipy.special import erf
 
 from pymultinest.solve import Solver
@@ -510,9 +510,10 @@ class FIR_SED_fit:
         self.uplim_nsig = uplim_nsig
         
         if self.verbose:
-            print('', "Wavelength (μm)\tFlux ({unit})\tError ({unit})\tUpper limit?\tExclude?".format(unit=self.fluxdens_unit.replace("mu", 'μ')),
-                    *["{:.5g}\t\t{:.5g}\t\t{}\t\t{}\t\t{}".format(wl, f*self.fd_conv, 'N/A' if u else "{:.5g}".format(e*self.fd_conv), u, exc) \
-                        for wl, f, e, u, exc in zip (self.lambda_emit_vals, self.S_nu_vals, self.S_nu_errs, self.cont_uplims, self.cont_excludes)], sep='\n')
+            header = "Wavelength (μm)\tFlux ({unit})\tError ({unit})\tUpper limit?\tExclude?".format(unit=self.fluxdens_unit.replace("mu", 'μ'))
+            data_str = "{{:{0}.5g}}\t{{:{1}.5g}}\t{{:{2}}}\t{{:{3}}}\t{{:{4}}}".format(*["<{:d}".format(len(h)) for h in header.split('\t')])
+            print('', header, *[data_str.format(wl, f*self.fd_conv, 'N/A' if u else "{:.5g}".format(e*self.fd_conv), str(u), str(exc)) \
+                    for wl, f, e, u, exc in zip (self.lambda_emit_vals, self.S_nu_vals, self.S_nu_errs, self.cont_uplims, self.cont_excludes)], sep='\n')
         
         self.valid_cont_area = cont_area is not None and np.isfinite(cont_area) and cont_area > 0.0
         self.cont_area = cont_area
@@ -1909,10 +1910,10 @@ class FIR_SED_fit:
             
             self.ax.errorbar(x, s_nu*self.fd_conv, xerr=xrange.reshape(2, 1),
                                 yerr=0.5*s_nu*self.fd_conv if uplim else s_nuerr*self.fd_conv, uplims=uplim,
-                                marker='o', linestyle="None", color='k', alpha=0.4 if exclude else 0.8, zorder=5)
+                                marker='o', linestyle="None", mec='k', ecolor='k', mfc="None" if exclude else 'k', alpha=0.4 if exclude else 0.8, zorder=5)
             if uplim:
                 self.ax.errorbar(x, s_nu/self.uplim_nsig*self.fd_conv,
-                                    marker='_', linestyle="None", color='k', alpha=0.4 if exclude else 0.8, zorder=5)
+                                    marker='_', linestyle="None", ecolor='k', mec='k', mfc="None" if exclude else 'k', alpha=0.4 if exclude else 0.8, zorder=5)
             
             if s_nu / (self.uplim_nsig if uplim else 1) * self.fd_conv < self.F_nu_obs_min:
                 self.F_nu_obs_min = s_nu/(self.uplim_nsig if uplim else 1) * self.fd_conv
@@ -1925,7 +1926,7 @@ class FIR_SED_fit:
                 
                 self.ax_res.errorbar(x, (s_nu-s_nu_model)*self.fd_conv, xerr=xrange.reshape(2, 1),
                                         yerr=0.5*s_nu*self.fd_conv if uplim else s_nuerr*self.fd_conv, uplims=uplim,
-                                        marker='o', linestyle="None", color='k', alpha=0.4 if exclude else 0.8, zorder=5)
+                                        marker='o', linestyle="None", ecolor='k', mec='k', mfc="None" if exclude else 'k', alpha=0.4 if exclude else 0.8, zorder=5)
                 
                 if not exclude:
                     self.residuals_min.append((s_nu-s_nu_model-(2 if uplim else 1.25)*s_nuerr)*self.fd_conv)
@@ -1933,7 +1934,7 @@ class FIR_SED_fit:
                 
                 if uplim:
                     self.ax_res.errorbar(x, (s_nu/self.uplim_nsig-s_nu_model)*self.fd_conv,
-                                            marker='_', linestyle="None", color='k', alpha=0.4 if exclude else 0.8, zorder=5)
+                                            marker='_', linestyle="None", ecolor='k', mec='k', mfc="None" if exclude else 'k', alpha=0.4 if exclude else 0.8, zorder=5)
     
     def set_axes(self, bot_axis, add_top_axis, set_xrange, set_xlabel, set_ylabel, low_yspace_mult, up_yspace_mult, rowi, coli, plot_ax_res=False):
         """Function for setting up the axes in an SED plot; designed for internal use.

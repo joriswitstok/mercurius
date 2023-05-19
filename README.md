@@ -12,7 +12,7 @@
 
 ## <a name="Description"></a>Description
 
-Multimodal Estimation Routine for the Cosmological Unravelling of Rest-frame Infrared Uniformised Spectra (MERCURIUS) uses the `pymultinest` package ([Feroz et al. 2009](https://ui.adsabs.harvard.edu/abs/2009MNRAS.398.1601F/abstract); [Buchner et al. 2014](https://ui.adsabs.harvard.edu/abs/2014A%26A...564A.125B/abstract)) to fit and plot greybody spectra given far-infrared (FIR) photometry of an object. Below, its usage is illustrated with an example.
+Multimodal Estimation Routine for the Cosmological Unravelling of Rest-frame Infrared Uniformised Spectra (MERCURIUS) uses the `pymultinest` package ([Feroz et al. 2009](https://ui.adsabs.harvard.edu/abs/2009MNRAS.398.1601F/abstract); [Buchner et al. 2014](https://ui.adsabs.harvard.edu/abs/2014A%26A...564A.125B/abstract)) to fit and plot greybody spectra given far-infrared (FIR) photometry of an object. It is described in [Witstok et al. (2022)](https://doi.org/10.1093/mnras/stac1905) and used extensively in [Witstok et al. (2023)](https://doi.org/10.1093/mnras/stad1470). Below, its usage is illustrated with an example.
 
 ## <a name="Installation"></a>Installation and setup
 

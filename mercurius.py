@@ -824,18 +824,25 @@ class FIR_SED_fit:
             rdict["SFR"] = self.SFR_UV + rdict["SFR_IR"]
             rdict["SFR_err"] = np.sqrt(np.tile(self.SFR_UV_err, 2)**2 + (rdict["SFR_IR"]/3.0 if rdict["L_IR_uplim"] else rdict["SFR_IR_err"])**2)
 
-            extra_dim = 3
-            names = ["logM_dust", "logL_IR", "logL_FIR", "T_dust", "T_peak"]
             main_names = ["logM_dust", "T_dust"]
-            data = [logM_dust_samples, np.log10(L_IR_Lsun_samples), np.log10(L_FIR_Lsun_samples), T_dust_samples, T_peak_samples]
+            if self.analysis:
+                names = ["logM_dust", "logL_IR", "logL_FIR", "T_dust", "T_peak"]
+                data = [logM_dust_samples, np.log10(L_IR_Lsun_samples), np.log10(L_FIR_Lsun_samples), T_dust_samples, T_peak_samples]
+                
+                labels = [r"$\log_{10} \left( M_\mathrm{dust} \, (\mathrm{M_\odot}) \right)$", r"$\log_{10} \left( L_\mathrm{IR} \, (\mathrm{L_\odot}) \right)$",
+                            r"$\log_{10} \left( L_\mathrm{FIR} \, (\mathrm{L_\odot}) \right)$",
+                            r"$T_\mathrm{dust} \, (\mathrm{K})$", r"$T_\mathrm{peak} \, (\mathrm{K})$"]
+            else:
+                names = ["logM_dust", "logL_IR", "T_dust"]
+                data = [logM_dust_samples, np.log10(L_IR_Lsun_samples), T_dust_samples]
+                
+                labels = [r"$\log_{10} \left( M_\mathrm{dust} \, (\mathrm{M_\odot}) \right)$", r"$\log_{10} \left( L_\mathrm{IR} \, (\mathrm{L_\odot}) \right)$",
+                            r"$T_\mathrm{dust} \, (\mathrm{K})$"]
             del logM_dust_samples, L_IR_Lsun_samples, L_FIR_Lsun_samples, T_dust_samples, T_peak_samples
             
+            extra_dim = len(names) - len(main_names)
             n_bins = max(50, n_samples//500)
-            bins = [n_bins, n_bins, n_bins, n_bins, n_bins]
-            
-            labels = [r"$\log_{10} \left( M_\mathrm{dust} \, (\mathrm{M_\odot}) \right)$", r"$\log_{10} \left( L_\mathrm{IR} \, (\mathrm{L_\odot}) \right)$",
-                        r"$\log_{10} \left( L_\mathrm{FIR} \, (\mathrm{L_\odot}) \right)$",
-                        r"$T_\mathrm{dust} \, (\mathrm{K})$", r"$T_\mathrm{peak} \, (\mathrm{K})$"]
+            bins = [n_bins] * len(names)
             
             if l0 == "self-consistent":
                 extra_dim += 1
@@ -862,18 +869,21 @@ class FIR_SED_fit:
             ranges = []
             for n, d in zip(names, data):
                 if n in ["logM_dust", "logL_IR", "logL_FIR"]:
-                    ranges.append((math.floor(np.min(d)), math.ceil(np.max(d))))
+                    ranges.append((0.99*math.floor(np.min(d)), 1.01*math.ceil(np.max(d))))
                 elif n in ["T_dust", "T_peak"]:
-                    ranges.append((math.floor(0.8*T_CMB_obs*(1.0+self.z)) if np.percentile(d, 99) < 40 else 0, math.ceil(np.percentile(d, 99.5))))
+                    if np.percentile(d, 99) < 40:
+                        ranges.append((math.floor(T_CMB_obs*(1.0+self.z))-5, math.ceil(np.percentile(d, 99.5))+5))
+                    else:
+                        ranges.append((-5, math.ceil(np.percentile(d, 99.5))+5))
             
             if l0 == "self-consistent":
-                ranges.insert(1, 0.9)
+                ranges.insert(1, (-5, math.ceil(np.percentile(data[names.index("lambda_0")], 99.5))+5))
             if not self.fixed_beta:
                 ranges.append((0.75, 5.25))
             
             if pltfol:
                 cfig = corner.corner(np.transpose(data), labels=labels, bins=bins, range=ranges,
-                                        quantiles=[0.5*(1-0.682689), 0.5, 0.5*(1+0.682689)],
+                                        quantiles=[0.5*(1-0.682689), 0.5, 0.5*(1+0.682689)], smooth=0.5, smooth1d=0.5,
                                         color=dcolor, show_titles=True, title_kwargs=dict(size="small"))
 
                 text = self.obj
@@ -883,12 +893,13 @@ class FIR_SED_fit:
                 else:
                     size = "large"
                 text += '\n' + r"$z = {:.6g}$, $T_\mathrm{{ CMB }} = {:.2f} \, \mathrm{{ K }}$".format(self.z, T_CMB_obs*(1.0+self.z))
-                if not np.isnan(self.obj_M):
-                    text += '\n' + r"$M_* = {:.1f}_{{-{:.1f}}}^{{+{:.1f}}} \cdot 10^{{{:d}}} \, \mathrm{{M_\odot}}$".format(self.obj_M/10**math.floor(np.log10(self.obj_M)),
-                                self.obj_M_lowerr/10**math.floor(np.log10(self.obj_M)), self.obj_M_uperr/10**math.floor(np.log10(self.obj_M)), math.floor(np.log10(self.obj_M)))
-                if not np.isnan(self.SFR_UV):
-                    text += r", $\mathrm{{ SFR_{{UV}} }} = {:.0f}{}".format(self.SFR_UV, r'' if np.isnan(self.SFR_UV_err) else r" \pm {:.0f}".format(self.SFR_UV_err)) + \
-                            r" \, \mathrm{{M_\odot yr^{{-1}}}}$"
+                if self.analysis:
+                    if not np.isnan(self.obj_M):
+                        text += '\n' + r"$M_* = {:.1f}_{{-{:.1f}}}^{{+{:.1f}}} \cdot 10^{{{:d}}} \, \mathrm{{M_\odot}}$".format(self.obj_M/10**math.floor(np.log10(self.obj_M)),
+                                    self.obj_M_lowerr/10**math.floor(np.log10(self.obj_M)), self.obj_M_uperr/10**math.floor(np.log10(self.obj_M)), math.floor(np.log10(self.obj_M)))
+                    if not np.isnan(self.SFR_UV):
+                        text += r", $\mathrm{{ SFR_{{UV}} }} = {:.0f}{}".format(self.SFR_UV, r'' if np.isnan(self.SFR_UV_err) else r" \pm {:.0f}".format(self.SFR_UV_err)) + \
+                                r" \, \mathrm{{M_\odot yr^{{-1}}}}$"
                 
                 cfig.suptitle(text, size=size)
 
@@ -904,37 +915,47 @@ class FIR_SED_fit:
                                                 transform=axes_c[ri, ci].get_yaxis_transform(), linestyles=['--', '-', '--'], color="grey")
                         axes_c[ri, ci].plot(np.percentile(data[ci], 50), np.percentile(data[ri], 50), color="grey", marker='s', mfc="None", mec="grey")
 
-                        if names[ri] in main_names and names[ci] in main_names:
-                            axes_c[ri, ci].plot(rdict["theta_ML"][main_names.index(names[ci])], rdict["theta_ML"][main_names.index(names[ri])],
-                                                color='k', marker='o', mfc="None", mec='k', mew=1.5)
+                        if self.analysis:
+                            if names[ri] in main_names and names[ci] in main_names:
+                                axes_c[ri, ci].plot(rdict["theta_ML"][main_names.index(names[ci])], rdict["theta_ML"][main_names.index(names[ri])],
+                                                    color='k', marker='o', mfc="None", mec='k', mew=1.5)
                 
-                ax_c = axes_c[names.index("T_peak"), names.index("T_dust")]
-                ax_c.plot(np.linspace(-10, 200, 10), np.linspace(-10, 200, 10), linestyle='--', color="lightgrey", alpha=0.6)
+                if "T_peak" in names:
+                    ax_c = axes_c[names.index("T_peak"), names.index("T_dust")]
+                    ax_c.plot(np.linspace(-10, 200, 10), np.linspace(-10, 200, 10), linestyle='--', color="lightgrey", alpha=0.6)
                 
-                ax_c = axes_c[names.index("T_dust"), names.index("T_dust")]
-                ax_c.axvline(T_CMB_obs*(1.0+self.z), linestyle='--', color='k', alpha=0.6)
-                ax_c.annotate(text=r"$T_\mathrm{{ CMB }} (z = {:.6g})$".format(self.z), xy=(T_CMB_obs*(1.0+self.z), 0.5), xytext=(-2, 0),
-                                xycoords=ax_c.get_xaxis_transform(), textcoords="offset points", rotation="vertical",
-                                va="center", ha="right", size="xx-small", alpha=0.8).set_bbox(dict(boxstyle="Round, pad=0.05", facecolor='w', edgecolor="None", alpha=0.8))
-                if self.T_lolim or self.T_uplim:
-                    ax_c.axvline(T_lim, color="grey", alpha=0.6)
-                    ax_c.annotate(text=("Lower" if self.T_lolim else "Upper") + " limit (95% conf.)", xy=(T_lim, 1), xytext=(2, -4),
-                                    xycoords=ax_c.get_xaxis_transform(), textcoords="offset points", rotation="vertical",
-                                    va="top", ha="left", size="xx-small", alpha=0.8).set_bbox(dict(boxstyle="Round, pad=0.05", facecolor='w', edgecolor="None", alpha=0.8))
+                for ax_c in axes_c[names.index("T_dust"), :names.index("T_dust")]:
+                    ax_c.axhline(T_CMB_obs*(1.0+self.z), linestyle=':', color='k', alpha=0.6)
+                for ai, ax_c in enumerate(axes_c[names.index("T_dust"):, names.index("T_dust")]):
+                    ax_c.axvline(T_CMB_obs*(1.0+self.z), linestyle=':', color='k', alpha=0.6)
+                    if ai == 0:
+                        ax_c.annotate(text=r"$T_\mathrm{{ CMB }} (z = {:.6g})$".format(self.z), xy=(T_CMB_obs*(1.0+self.z), 0.5), xytext=(-2, 0),
+                                        xycoords=ax_c.get_xaxis_transform(), textcoords="offset points", rotation="vertical",
+                                        va="center", ha="right", size="xx-small", alpha=0.8).set_bbox(dict(boxstyle="Round, pad=0.05", facecolor='w', edgecolor="None", alpha=0.8))
+                    if self.T_lolim or self.T_uplim:
+                        ax_c.axvline(T_lim, color="grey", alpha=0.6)
+                        ax_c.annotate(text=("Lower" if self.T_lolim else "Upper") + " limit (95% conf.)", xy=(T_lim, 1), xytext=(2, -4),
+                                        xycoords=ax_c.get_xaxis_transform(), textcoords="offset points", rotation="vertical",
+                                        va="top", ha="left", size="xx-small", alpha=0.8).set_bbox(dict(boxstyle="Round, pad=0.05", facecolor='w', edgecolor="None", alpha=0.8))
                 
-                ax_c = axes_c[names.index("T_peak"), names.index("T_peak")]
-                ax_c.axvline(T_CMB_obs*(1.0+self.z), linestyle='--', color='k', alpha=0.6)
-                ax_c.annotate(text=r"$T_\mathrm{{ CMB }} (z = {:.6g})$".format(self.z), xy=(T_CMB_obs*(1.0+self.z), 0.5), xytext=(-2, 0),
-                                xycoords=ax_c.get_xaxis_transform(), textcoords="offset points", rotation="vertical",
-                                va="center", ha="right", size="xx-small", alpha=0.8).set_bbox(dict(boxstyle="Round, pad=0.05", facecolor='w', edgecolor="None", alpha=0.8))
+                if "T_peak" in names:
+                    for ax_c in axes_c[names.index("T_peak"), :names.index("T_peak")]:
+                        ax_c.axhline(T_CMB_obs*(1.0+self.z), linestyle=':', color='k', alpha=0.6)
+                    for ai, ax_c in enumerate(axes_c[names.index("T_peak"):, names.index("T_peak")]):
+                        ax_c.axvline(T_CMB_obs*(1.0+self.z), linestyle=':', color='k', alpha=0.6)
+                        if ai == 0:
+                            ax_c.annotate(text=r"$T_\mathrm{{ CMB }} (z = {:.6g})$".format(self.z), xy=(T_CMB_obs*(1.0+self.z), 0.5), xytext=(-2, 0),
+                                            xycoords=ax_c.get_xaxis_transform(), textcoords="offset points", rotation="vertical",
+                                            va="center", ha="right", size="xx-small", alpha=0.8).set_bbox(dict(boxstyle="Round, pad=0.05", facecolor='w', edgecolor="None", alpha=0.8))
                 if self.T_lolim or self.T_uplim:
                     ax_c.axvline(rdict["T_peak"], color="grey", alpha=0.6)
                     ax_c.annotate(text=("Lower" if self.T_lolim else "Upper") + " limit (95% conf.)", xy=(rdict["T_peak"], 1), xytext=(2, -4),
                                     xycoords=ax_c.get_xaxis_transform(), textcoords="offset points", rotation="vertical",
                                     va="top", ha="left", size="xx-small", alpha=0.8).set_bbox(dict(boxstyle="Round, pad=0.05", facecolor='w', edgecolor="None", alpha=0.8))
                 
-                self.annotate_results(rdict, [axes_c[0, -1], axes_c[1, -1]], ax_type="corner", ann_size=ann_size)
-                cfig.savefig(pltfol + "Corner_MN_" + self.obj_fn + self.get_mstring(l0_list=[l0], inc_astr=False) + self.pformat,
+                if self.analysis:
+                    self.annotate_results(rdict, [axes_c[0, -1], axes_c[1, -1]], ax_type="corner", ann_size=ann_size)
+                cfig.savefig(pltfol + "Corner_MN_" + self.obj_fn + self.get_mstring(l0_list=[l0], single_plot=False) + self.pformat,
                                 dpi=self.dpi, bbox_inches="tight")
         
                 # plt.show()
@@ -1840,11 +1861,11 @@ class FIR_SED_fit:
             prec_ySN = max(0, 2-math.floor(np.log10(min(rdict["dust_yield_SN_lowerr"], rdict["dust_yield_SN_uperr"]))))
 
             text += '\n' + r"$M_\mathrm{{ dust }} / M_* = {:.{prec}f}_{{ -{:.{prec}f} }}^{{ +{:.{prec}f} }}$".format(rdict["dust_frac"],
-                                rdict["dust_frac_lowerr"], rdict["dust_frac_uperr"], prec=prec_fr) + \
-                    '\n' + r"Dust yield (AGB, SN): ${:.{prec}f}_{{ -{:.{prec}f} }}^{{ +{:.{prec}f} }} \, \mathrm{{ M_\odot }}$, ".format(rdict["dust_yield_AGB"],
-                                rdict["dust_yield_AGB_lowerr"], rdict["dust_yield_AGB_uperr"], prec=prec_yAGB) + \
-                            r"${:.{prec}f}_{{ -{:.{prec}f} }}^{{ +{:.{prec}f} }} \, \mathrm{{ M_\odot }}$".format(rdict["dust_yield_SN"],
-                                rdict["dust_yield_SN_lowerr"], rdict["dust_yield_SN_uperr"], prec=prec_ySN)
+                                rdict["dust_frac_lowerr"], rdict["dust_frac_uperr"], prec=prec_fr) # + \
+                    # '\n' + r"Dust yield (AGB, SN): ${:.{prec}f}_{{ -{:.{prec}f} }}^{{ +{:.{prec}f} }} \, \mathrm{{ M_\odot }}$, ".format(rdict["dust_yield_AGB"],
+                    #             rdict["dust_yield_AGB_lowerr"], rdict["dust_yield_AGB_uperr"], prec=prec_yAGB) + \
+                    #         r"${:.{prec}f}_{{ -{:.{prec}f} }}^{{ +{:.{prec}f} }} \, \mathrm{{ M_\odot }}$".format(rdict["dust_yield_SN"],
+                    #             rdict["dust_yield_SN_lowerr"], rdict["dust_yield_SN_uperr"], prec=prec_ySN)
         
         if ax_type == "regular":
             xy = (0, 0)

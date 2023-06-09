@@ -66,9 +66,6 @@ dust_cmap = sns.color_palette("inferno", as_cmap=True)
 dust_norm = matplotlib.colors.Normalize(vmin=0, vmax=T_dusts_global[-1])
 
 
-
-
-
 def log_prob_Gauss(x, mu, cov):
     # Simple logarithmic probability function for Gaussian distribution
     diff = x - mu
@@ -124,7 +121,7 @@ def FIR_SED_spectrum(theta, z, D_L, l0_dict, lambda_emit=None):
     T_dust = theta[1]
     beta_IR = theta[2]
     
-    if l0_dict.get("value", -1) is not None:
+    if l0_dict.get("cont_area_kpc2") is not None:
         # Dust area in kpc^2 converted to cm^2 (1 kpc = 3.085677e21 cm)
         l0_dict["cont_area_cm2"] = l0_dict["cont_area_kpc2"] * 3.085677e21**2
     
@@ -253,11 +250,12 @@ class MN_FIR_SED_solver(Solver):
         return cube
 
     def LogLikelihood(self, cube):
+
         if self.fixed_beta:
             theta = (cube[0], cube[1], self.fixed_beta)
         else:
             theta = (cube[0], cube[1], cube[2])
-        
+
         model_fluxes = FIR_SED_spectrum(theta=theta, z=self.z, D_L=self.D_L, l0_dict=self.l0_dict, lambda_emit=self.wls)[3]
 
         # Calculate the log likelihood given both detections and upper limits according to the formalism in Sawicki et al. (2012):

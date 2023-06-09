@@ -66,6 +66,7 @@ dust_cmap = sns.color_palette("inferno", as_cmap=True)
 dust_norm = matplotlib.colors.Normalize(vmin=0, vmax=T_dusts_global[-1])
 
 
+
 def log_prob_Gauss(x, mu, cov):
     # Simple logarithmic probability function for Gaussian distribution
     diff = x - mu

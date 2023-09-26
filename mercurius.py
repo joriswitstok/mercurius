@@ -17,6 +17,7 @@ import math
 
 from scipy.stats import gamma, norm
 from scipy.special import erf
+from scipy.ndimage import gaussian_filter
 
 from pymultinest.solve import Solver
 from emcee import EnsembleSampler
@@ -192,7 +193,7 @@ def FIR_SED_spectrum(theta, z, D_L, l0_dict, lambda_emit=None):
 
 class MN_FIR_SED_solver(Solver):
     def __init__(self, z, D_L, l0_dict, fluxes, flux_errs, uplims, wls,
-                    fixed_beta=None, fit_uplims=True, uplim_nsig=None, M_star=np.nan, T_max=150.0, **solv_kwargs):
+                    fixed_T_dust=None, fixed_beta=None, fit_uplims=True, uplim_nsig=None, M_star=np.nan, T_max=150.0, **solv_kwargs):
         print("Initialising MultiNest Solver object...")
         
         self.z = z
@@ -206,6 +207,7 @@ class MN_FIR_SED_solver(Solver):
         self.uplims = uplims
         self.wls = wls
         
+        self.fixed_T_dust = fixed_T_dust
         self.fixed_beta = fixed_beta
         self.fit_uplims = fit_uplims
         if uplim_nsig is None:
@@ -229,7 +231,9 @@ class MN_FIR_SED_solver(Solver):
         
         T_dust_range = [self.T_CMB, T_max]
 
-        self.cube_range = [logM_dust_range, T_dust_range]
+        self.cube_range = [logM_dust_range]
+        if not self.fixed_T_dust:
+            self.cube_range.append(T_dust_range)
         if not self.fixed_beta:
             self.cube_range.append(beta_range)
         
@@ -239,10 +243,10 @@ class MN_FIR_SED_solver(Solver):
         assert hasattr(self, "cube_range")
         # Scale the input unit cube to apply uniform priors across all parameters (except the temperature)
         for di in range(len(cube)):
-            if di == 2:
+            if (self.fixed_T_dust and di == 1) or di == 2:
                 # Use a normal distribution for the dust emissivity (prior belief: beta likely around 1.8)
                 cube[di] = norm.ppf(cube[di], loc=1.8, scale=0.25)
-            elif di == 1:
+            elif not self.fixed_T_dust and di == 1:
                 # Use a gamma distribution for the dust temperature (prior belief: unlikely to be near CMB or extremely high temperature)
                 cube[di] = gamma.ppf(cube[di], a=1.5, loc=0, scale=self.cube_range[di, 0]/0.5) + self.cube_range[di, 0]
             else:
@@ -252,11 +256,8 @@ class MN_FIR_SED_solver(Solver):
 
     def LogLikelihood(self, cube):
 
-        if self.fixed_beta:
-            theta = (cube[0], cube[1], self.fixed_beta)
-        else:
-            theta = (cube[0], cube[1], cube[2])
-
+        theta = (cube[0], self.fixed_T_dust if self.fixed_T_dust else cube[1],
+                    self.fixed_beta if self.fixed_beta else (cube[1] if self.fixed_T_dust else cube[2]))
         model_fluxes = FIR_SED_spectrum(theta=theta, z=self.z, D_L=self.D_L, l0_dict=self.l0_dict, lambda_emit=self.wls)[3]
 
         # Calculate the log likelihood given both detections and upper limits according to the formalism in Sawicki et al. (2012):
@@ -272,7 +273,7 @@ class MN_FIR_SED_solver(Solver):
 
 class FIR_SED_fit:
     def __init__(self, l0_list, analysis, mnrfol, fluxdens_unit="muJy", l_min=None, l_max=None,
-                    fixed_T_dust=50.0, fixed_beta=None, cosmo=None,
+                    fixed_T_dust=None, fixed_beta=None, fid_T_dust=50.0, cosmo=None,
                     T_lolim=False, T_uplim=False,
                     obj_color=None, l0_linestyles=None, pformat=None, dpi=None, mpl_style=None, verbose=True):
         """Class `FIR_SED_fit` for interacting with the fitting and plotting routines of `mercurius`.
@@ -296,10 +297,13 @@ class FIR_SED_fit:
         l_max : {None, float}, optional
             Value in micron of the upper rest-frame wavelength bound in figures.
             Default is `None`, which results in `300.0`.
-        fixed_T_dust : float, optional
-            Fixed value of the dust temperature in Kelvin, set to `50.0` by default.
+        fixed_T_dust : {`None`, float}, optional
+            Fixed value of the dust temperature, or `None` if variable (default).
         fixed_beta : {`None`, float}, optional
             Fixed value of the dust emissivity beta, or `None` if variable (default).
+        fid_T_dust : float, optional
+            Fiducial value of the dust temperature in Kelvin, set to `50.0` by default
+            (overridden by `fixed_T_dust` if specified).
         cosmo : instance of astropy.cosmology.FLRW, optional
             Custom cosmology (see `astropy` documentation for details).
         T_lolim : bool, optional
@@ -355,11 +359,10 @@ class FIR_SED_fit:
             self.l_max = l_max
         
         self.set_fixed_values(fixed_T_dust, fixed_beta)
+        self.fid_T_dust = fid_T_dust
         if verbose:
-            if self.fixed_beta:
-                print("Chosen fiducial values T_dust = {:.0f} K, β = {:.2g}...".format(fixed_T_dust, fixed_beta))
-            else:
-                print("Chosen fiducial value T_dust = {:.0f} K (β is freely varying)...".format(fixed_T_dust))
+            print("Chosen fiducial values T_dust = {:.0f} K,".format(self.fixed_T_dust if self.fixed_T_dust else self.fid_T_dust), end=' ')
+            print(("β = {:.2g}".format(self.fixed_beta) if self.fixed_beta else "(β is freely varying)") + "...")
 
         if cosmo is None:
             self.cosmo = FlatLambdaCDM(H0=70.0, Om0=0.300)
@@ -409,8 +412,9 @@ class FIR_SED_fit:
 
         """
 
-        self.fixed_T_dust = fixed_T_dust
-        self.fixed_beta = fixed_beta
+        self.fixed_T_dust = float(fixed_T_dust) if fixed_T_dust else None
+        self.T_dust_str = "_T_dust_{:.1f}".format(self.fixed_T_dust) if self.fixed_T_dust else ''
+        self.fixed_beta = float(fixed_beta) if fixed_beta else None
         self.beta_str = "beta_{:.1f}".format(self.fixed_beta) if self.fixed_beta else "vary_beta"
 
     def set_data(self, obj, z,
@@ -577,8 +581,8 @@ class FIR_SED_fit:
         flat_samples : tuple
             If `return_samples` is set to `True`, a tuple containing two lists is returned:
             one of arrays containing N samples of various parameters and one of the
-            parameter names (the exact parameters depending on whether the dust emissivity
-            is varied, with `fixed_beta` equal to `None`, or kept constant).
+            parameter names (the exact parameters depending on whether the dust temperature and
+            emissivity are varied).
 
         """
         
@@ -609,12 +613,13 @@ class FIR_SED_fit:
 
             # Run fit on data
             
-            n_dim = 3 - bool(self.fixed_beta)
+            n_dim = 3 - bool(self.fixed_T_dust) - bool(self.fixed_beta)
 
-            samples_fname = self.mnrfol + "{}_MN_FIR_SED_flat_samples_{}{}.npz".format(self.obj_fn, self.beta_str, l0_str)
+            samples_fname = self.mnrfol + "{}_MN_FIR_SED_flat_samples{}_{}{}.npz".format(self.obj_fn, self.T_dust_str, self.beta_str, l0_str)
             if not force_run and skip_redundant_calc and os.path.isfile(samples_fname):
                 print("\nResults already present: skipping {:d}-dimensional MultiNest fit".format(n_dim),
-                        "with {}{}".format("β = {:.1f}".format(self.fixed_beta) if self.fixed_beta else "varying β", l0_txt),
+                        "with {}".format("T_dust = {:.1f} K".format(self.fixed_T_dust) if self.fixed_T_dust else "varying T_dust"),
+                        "and {}{}".format("β = {:.1f}".format(self.fixed_beta) if self.fixed_beta else "varying β", l0_txt),
                         "for {}...".format(self.obj))
                 continue
             obtain_MN_samples = force_run or not os.path.isfile(samples_fname)
@@ -626,7 +631,8 @@ class FIR_SED_fit:
             if obtain_MN_samples:
                 if self.verbose:
                     print("\nRunning {:d}-dimensional MultiNest fit".format(n_dim),
-                            "with {}{}".format("β = {:.1f}".format(self.fixed_beta) if self.fixed_beta else "varying β", l0_txt),
+                            "with {}".format("T_dust = {:.1f} K".format(self.fixed_T_dust) if self.fixed_T_dust else "varying T_dust"),
+                            "and {}{}".format("β = {:.1f}".format(self.fixed_beta) if self.fixed_beta else "varying β", l0_txt),
                             "for {}...".format(self.obj))
                 
                 currentdir = os.getcwd()
@@ -636,7 +642,7 @@ class FIR_SED_fit:
                     MN_solv = MN_FIR_SED_solver(z=self.z, D_L=self.D_L, l0_dict=l0_dict,
                                                 fluxes=self.S_nu_vals[~self.cont_excludes], flux_errs=self.S_nu_errs[~self.cont_excludes],
                                                 uplims=self.cont_uplims[~self.cont_excludes], wls=self.lambda_emit_vals[~self.cont_excludes],
-                                                fixed_beta=self.fixed_beta, fit_uplims=fit_uplims, uplim_nsig=self.uplim_nsig,
+                                                fixed_T_dust=self.fixed_T_dust, fixed_beta=self.fixed_beta, fit_uplims=fit_uplims, uplim_nsig=self.uplim_nsig,
                                                 n_dims=n_dim, outputfiles_basename="MN", n_live_points=n_live_points,
                                                 evidence_tolerance=evidence_tolerance, sampling_efficiency=sampling_efficiency, max_iter=max_iter,
                                                 resume=False, verbose=mnverbose and self.verbose)
@@ -656,30 +662,34 @@ class FIR_SED_fit:
                     # Save results
                     np.savez_compressed(samples_fname, flat_samples=flat_samples)
                 if self.verbose:
-                    print("\nFreshly calculated MultiNest samples with {}{}".format("β = {:.1f}".format(self.fixed_beta) if self.fixed_beta else "varying β", l0_txt),
+                    print("\nFreshly calculated MultiNest samples with {}".format("T_dust = {:.1f} K".format(self.fixed_T_dust) if self.fixed_T_dust else "varying T_dust"),
+                            "{}{}".format("β = {:.1f}".format(self.fixed_beta) if self.fixed_beta else "varying β", l0_txt),
                             "for {}!\nNumber of samples: {:d}, array size: {:.2g} MB".format(self.obj, flat_samples.shape[0], flat_samples.nbytes/1e6))
             else:
                 # Read in samples from the MN run
                 flat_samples = np.load(samples_fname)["flat_samples"]
 
                 if self.verbose:
-                    print("\nFreshly loaded MultiNest samples with {}{}".format("β = {:.1f}".format(self.fixed_beta) if self.fixed_beta else "varying β", l0_txt),
+                    print("\nFreshly loaded MultiNest samples with {}".format("T_dust = {:.1f} K".format(self.fixed_T_dust) if self.fixed_T_dust else "varying T_dust"),
+                            "{}{}".format("β = {:.1f}".format(self.fixed_beta) if self.fixed_beta else "varying β", l0_txt),
                             "for {}!\nNumber of samples: {:d}, array size: {:.2g} MB".format(self.obj, flat_samples.shape[0], flat_samples.nbytes/1e6))
             
+            rdict = {}
             n_samples = flat_samples.shape[0]
             logM_dust_samples = flat_samples[:, 0]
-            T_dust_samples = flat_samples[:, 1]
 
-            rdict = {}
+            if self.fixed_T_dust:
+                T_dust, rdict["T_dust_lowerr"], rdict["T_dust_uperr"] = self.fixed_T_dust, np.nan, np.nan
+                flat_samples = np.insert(flat_samples, 1, np.tile(T_dust, n_samples), axis=1)
+            if self.fixed_beta:
+                beta_IR, rdict["beta_IR_lowerr"], rdict["beta_IR_uperr"] = self.fixed_beta, np.nan, np.nan
+                flat_samples = np.insert(flat_samples, 2, np.tile(beta_IR, n_samples), axis=1)
 
             # There is at least one detection, so set upper limits to False
             rdict["M_dust_uplim"] = False
             rdict["L_IR_uplim"] = False
             
-            if self.fixed_beta:
-                beta_IR, rdict["beta_IR_lowerr"], rdict["beta_IR_uperr"] = self.fixed_beta, np.nan, np.nan
-                flat_samples = np.concatenate((flat_samples, np.tile(beta_IR, n_samples).reshape(n_samples, 1)), axis=1)
-            else:
+            if not self.fixed_beta:
                 # Calculate percentiles of dust emissivity, masking any non-finite values
                 beta_samples = flat_samples[:, 2]
                 beta_perc = np.percentile(beta_samples[np.isfinite(beta_samples)], percentiles, axis=0)
@@ -730,18 +740,29 @@ class FIR_SED_fit:
             rdict["dust_yield_SN"], rdict["dust_yield_SN_lowerr"], rdict["dust_yield_SN_uperr"] = 84 * np.array([rdict["dust_frac"],
                                                                                 rdict["dust_frac_lowerr"], rdict["dust_frac_uperr"]])
             
-            T_perc = np.percentile(T_dust_samples, percentiles, axis=0)
-            T_dust, rdict["T_dust_lowerr"], rdict["T_dust_uperr"] = T_perc[1], *np.diff(T_perc)
+            if self.fixed_T_dust:
+                T_lim = np.nan
+                if self.T_lolim:
+                    rdict["T_lolim"] = T_lim
+                elif self.T_uplim:
+                    rdict["T_uplim"] = T_lim
+            else:
+                # Calculate percentiles of dust emissivity, masking any non-finite values
+                T_dust_samples = flat_samples[:, 1]
+                T_perc = np.percentile(T_dust_samples, percentiles, axis=0)
+                T_dust, rdict["T_dust_lowerr"], rdict["T_dust_uperr"] = T_perc[1], *np.diff(T_perc)
+                beta_IR, rdict["beta_IR_lowerr"], rdict["beta_IR_uperr"] = beta_perc[1], *np.diff(beta_perc)
+                if self.T_lolim:
+                    rdict["T_lolim"] = np.percentile(T_dust_samples, 5)
+                    T_lim = rdict["T_lolim"]
+                elif self.T_uplim:
+                    rdict["T_uplim"] = np.percentile(T_dust_samples, 95)
+                    T_lim = rdict["T_uplim"]
+                else:
+                    T_lim = np.nan
+            
             dcolor = dust_cmap(dust_norm(T_dust))
             rdict["T_dust"] = T_dust
-            if self.T_lolim:
-                rdict["T_lolim"] = np.percentile(T_dust_samples, 5)
-                T_lim = rdict["T_lolim"]
-            elif self.T_uplim:
-                rdict["T_uplim"] = np.percentile(T_dust_samples, 95)
-                T_lim = rdict["T_uplim"]
-            else:
-                T_lim = np.nan
             
             rdict["T_dust_z0"] = inv_CMB_heating(self.z, T_dust, beta_IR)
             rdict["T_dust_z0_lowerr"], rdict["T_dust_z0_uperr"] = np.abs(np.sort(inv_CMB_heating(self.z, np.array([T_dust-rdict["T_dust_lowerr"], T_dust+rdict["T_dust_uperr"]]), beta_IR) - rdict["T_dust_z0"]))
@@ -751,12 +772,18 @@ class FIR_SED_fit:
                 rdict["T_uplim_z0"] = inv_CMB_heating(self.z, rdict["T_uplim"], beta_IR)
             
             # Get the normalised spectrum for the best-fit parameters
-            data = [logM_dust_samples, T_dust_samples] if self.fixed_beta else [logM_dust_samples, T_dust_samples, beta_samples]
+            data = [logM_dust_samples]
+            if not self.fixed_T_dust:
+                data.append(T_dust_samples)
+            if not self.fixed_beta:
+                data.append(beta_samples)
             H, edges = np.histogramdd(data, bins=50, range=[np.percentile(d, [5, 95]) for d in data])
-            argmax = np.unravel_index(H.argmax(), H.shape)
+            argmax = np.unravel_index(gaussian_filter(H, 3).argmax(), H.shape)
             rdict["theta_ML"] = np.array([np.mean([edges[ai][a:a+2]]) for ai, a in enumerate(argmax)])
+            if self.fixed_T_dust:
+                rdict["theta_ML"] = np.insert(rdict["theta_ML"], 1, self.fixed_T_dust)
             if self.fixed_beta:
-                rdict["theta_ML"] = np.append(rdict["theta_ML"], self.fixed_beta)
+                rdict["theta_ML"] = np.insert(rdict["theta_ML"], 2, self.fixed_beta)
             # rdict["theta_ML"] = [np.log10(rdict["M_dust"]), T_dust, beta_IR]
 
             lambda_emit, nu_emit, rdict["S_nu_emit"], rdict["S_nu_obs"] = FIR_SED_spectrum(theta=rdict["theta_ML"],
@@ -823,26 +850,39 @@ class FIR_SED_fit:
             rdict["SFR"] = self.SFR_UV + rdict["SFR_IR"]
             rdict["SFR_err"] = np.sqrt(np.tile(self.SFR_UV_err, 2)**2 + (rdict["SFR_IR"]/3.0 if rdict["L_IR_uplim"] else rdict["SFR_IR_err"])**2)
 
-            main_names = ["logM_dust", "T_dust"]
+            main_names = ["logM_dust"]
             if self.analysis:
-                names = ["logM_dust", "logL_IR", "logL_FIR", "T_dust", "T_peak"]
-                data = [logM_dust_samples, np.log10(L_IR_Lsun_samples), np.log10(L_FIR_Lsun_samples), T_dust_samples, T_peak_samples]
+                names = ["logM_dust", "logL_IR", "logL_FIR"]
+                data = [logM_dust_samples, np.log10(L_IR_Lsun_samples), np.log10(L_FIR_Lsun_samples)]
                 
                 labels = [r"$\log_{10} \left( M_\mathrm{dust} \, (\mathrm{M_\odot}) \right)$", r"$\log_{10} \left( L_\mathrm{IR} \, (\mathrm{L_\odot}) \right)$",
-                            r"$\log_{10} \left( L_\mathrm{FIR} \, (\mathrm{L_\odot}) \right)$",
-                            r"$T_\mathrm{dust} \, (\mathrm{K})$", r"$T_\mathrm{peak} \, (\mathrm{K})$"]
+                            r"$\log_{10} \left( L_\mathrm{FIR} \, (\mathrm{L_\odot}) \right)$"]
             else:
-                names = ["logM_dust", "logL_IR", "T_dust"]
-                data = [logM_dust_samples, np.log10(L_IR_Lsun_samples), T_dust_samples]
+                names = ["logM_dust", "logL_IR"]
+                data = [logM_dust_samples, np.log10(L_IR_Lsun_samples)]
                 
-                labels = [r"$\log_{10} \left( M_\mathrm{dust} \, (\mathrm{M_\odot}) \right)$", r"$\log_{10} \left( L_\mathrm{IR} \, (\mathrm{L_\odot}) \right)$",
-                            r"$T_\mathrm{dust} \, (\mathrm{K})$"]
-            del logM_dust_samples, L_IR_Lsun_samples, L_FIR_Lsun_samples, T_dust_samples, T_peak_samples
+                labels = [r"$\log_{10} \left( M_\mathrm{dust} \, (\mathrm{M_\odot}) \right)$", r"$\log_{10} \left( L_\mathrm{IR} \, (\mathrm{L_\odot}) \right)$"]
+            del logM_dust_samples, L_IR_Lsun_samples, L_FIR_Lsun_samples
             
             extra_dim = len(names) - len(main_names)
             n_bins = max(50, n_samples//500)
             bins = [n_bins] * len(names)
             
+            if not self.fixed_T_dust:
+                names.append("T_dust")
+                main_names.append("T_dust")
+                data.append(T_dust_samples)
+                bins.append(n_bins)
+                labels.append(r"$T_\mathrm{dust} \, (\mathrm{K})$")
+                
+                if self.analysis:
+                    extra_dim += 1
+                    names.append("T_peak")
+                    data.append(T_peak_samples)
+                    bins.append(n_bins)
+                    labels.append(r"$T_\mathrm{peak} \, (\mathrm{K})$")
+                
+                del T_dust_samples, T_peak_samples
             if l0 == "self-consistent":
                 extra_dim += 1
                 names.insert(1, "lambda_0")
@@ -874,11 +914,10 @@ class FIR_SED_fit:
                         ranges.append((math.floor(T_CMB_obs*(1.0+self.z))-5, math.ceil(np.percentile(d, 99.5))+5))
                     else:
                         ranges.append((-5, math.ceil(np.percentile(d, 99.5))+5))
-            
-            if l0 == "self-consistent":
-                ranges.insert(1, (-5, math.ceil(np.percentile(data[names.index("lambda_0")], 99.5))+5))
-            if not self.fixed_beta:
-                ranges.append((0.75, 5.25))
+                elif n in ["lambda_0"]:
+                    ranges.append((-5, math.ceil(np.percentile(d, 99.5))+5))
+                elif n in ["beta"]:
+                    ranges.append((0.75, 5.25))
             
             if pltfol:
                 cfig = corner.corner(np.transpose(data), labels=labels, bins=bins, range=ranges,
@@ -923,19 +962,20 @@ class FIR_SED_fit:
                     ax_c = axes_c[names.index("T_peak"), names.index("T_dust")]
                     ax_c.plot(np.linspace(-10, 200, 10), np.linspace(-10, 200, 10), linestyle='--', color="lightgrey", alpha=0.6)
                 
-                for ax_c in axes_c[names.index("T_dust"), :names.index("T_dust")]:
-                    ax_c.axhline(T_CMB_obs*(1.0+self.z), linestyle=':', color='k', alpha=0.6)
-                for ai, ax_c in enumerate(axes_c[names.index("T_dust"):, names.index("T_dust")]):
-                    ax_c.axvline(T_CMB_obs*(1.0+self.z), linestyle=':', color='k', alpha=0.6)
-                    if ai == 0:
-                        ax_c.annotate(text=r"$T_\mathrm{{ CMB }} (z = {:.6g})$".format(self.z), xy=(T_CMB_obs*(1.0+self.z), 0.5), xytext=(-2, 0),
-                                        xycoords=ax_c.get_xaxis_transform(), textcoords="offset points", rotation="vertical",
-                                        va="center", ha="right", size="xx-small", alpha=0.8).set_bbox(dict(boxstyle="Round, pad=0.05", facecolor='w', edgecolor="None", alpha=0.8))
-                    if self.T_lolim or self.T_uplim:
-                        ax_c.axvline(T_lim, color="grey", alpha=0.6)
-                        ax_c.annotate(text=("Lower" if self.T_lolim else "Upper") + " limit (95% conf.)", xy=(T_lim, 1), xytext=(2, -4),
-                                        xycoords=ax_c.get_xaxis_transform(), textcoords="offset points", rotation="vertical",
-                                        va="top", ha="left", size="xx-small", alpha=0.8).set_bbox(dict(boxstyle="Round, pad=0.05", facecolor='w', edgecolor="None", alpha=0.8))
+                if "T_dust" in names:
+                    for ax_c in axes_c[names.index("T_dust"), :names.index("T_dust")]:
+                        ax_c.axhline(T_CMB_obs*(1.0+self.z), linestyle=':', color='k', alpha=0.6)
+                    for ai, ax_c in enumerate(axes_c[names.index("T_dust"):, names.index("T_dust")]):
+                        ax_c.axvline(T_CMB_obs*(1.0+self.z), linestyle=':', color='k', alpha=0.6)
+                        if ai == 0:
+                            ax_c.annotate(text=r"$T_\mathrm{{ CMB }} (z = {:.6g})$".format(self.z), xy=(T_CMB_obs*(1.0+self.z), 0.5), xytext=(-2, 0),
+                                            xycoords=ax_c.get_xaxis_transform(), textcoords="offset points", rotation="vertical",
+                                            va="center", ha="right", size="xx-small", alpha=0.8).set_bbox(dict(boxstyle="Round, pad=0.05", facecolor='w', edgecolor="None", alpha=0.8))
+                        if self.T_lolim or self.T_uplim:
+                            ax_c.axvline(T_lim, color="grey", alpha=0.6)
+                            ax_c.annotate(text=("Lower" if self.T_lolim else "Upper") + " limit (95% conf.)", xy=(T_lim, 1), xytext=(2, -4),
+                                            xycoords=ax_c.get_xaxis_transform(), textcoords="offset points", rotation="vertical",
+                                            va="top", ha="left", size="xx-small", alpha=0.8).set_bbox(dict(boxstyle="Round, pad=0.05", facecolor='w', edgecolor="None", alpha=0.8))
                 
                 if "T_peak" in names:
                     for ax_c in axes_c[names.index("T_peak"), :names.index("T_peak")]:
@@ -962,8 +1002,8 @@ class FIR_SED_fit:
             
             if save_results:
                 # Save results
-                np.savez_compressed(self.mnrfol + "{}_MN_FIR_SED_fit_{}{}.npz".format(self.obj_fn, self.beta_str, l0_str), **rdict)
-                np.savez_compressed(self.mnrfol + "{}_MN_FIR_SED_data_samples_{}{}.npz".format(self.obj_fn, self.beta_str, l0_str),
+                np.savez_compressed(self.mnrfol + "{}_MN_FIR_SED_fit{}_{}{}.npz".format(self.obj_fn, self.T_dust_str, self.beta_str, l0_str), **rdict)
+                np.savez_compressed(self.mnrfol + "{}_MN_FIR_SED_data_samples{}_{}{}.npz".format(self.obj_fn, self.T_dust_str, self.beta_str, l0_str),
                                     data=data, names=names)
                 self.fresh_calculation[l0] = True
             else:
@@ -994,25 +1034,30 @@ class FIR_SED_fit:
         L_IR_log10 = math.floor(np.log10(rdict["L_IR_Lsun"]))
         L_FIR_log10 = math.floor(np.log10(rdict["L_FIR_Lsun"]))
 
-        print("\nFreshly {} MultiNest estimates of {}".format(rtype, self.obj))
-        print("(with {}{}):".format("β = {:.1f}".format(self.fixed_beta) if self.fixed_beta else "varying β", l0_txt))
+        print("\nFreshly {} MultiNest estimates of {}".format(rtype, self.obj), end=' ')
+        print("(with {}, {}{}):".format("T_dust = {:.1f} K".format(self.fixed_T_dust) if self.fixed_T_dust else "varying T_dust",
+                                        "β = {:.1f}".format(self.fixed_beta) if self.fixed_beta else "varying β", l0_txt))
         print("M_dust = ({:.1f} -{:.1f} +{:.1f}) x 10^{:d} M_sun".format(rdict["M_dust"]/10**M_dust_log10,
                     rdict["M_dust_lowerr"]/10**M_dust_log10, rdict["M_dust_uperr"]/10**M_dust_log10, M_dust_log10))
         print("L_IR = ({:.1f} -{:.1f} +{:.1f}) x 10^{:d} L_sun".format(rdict["L_IR_Lsun"]/10**L_IR_log10,
                     rdict["L_IR_Lsun_lowerr"]/10**L_IR_log10, rdict["L_IR_Lsun_uperr"]/10**L_IR_log10, L_IR_log10))
         print("L_FIR = ({:.1f} -{:.1f} +{:.1f}) x 10^{:d} L_sun".format(rdict["L_FIR_Lsun"]/10**L_FIR_log10,
                     rdict["L_FIR_Lsun_lowerr"]/10**L_FIR_log10, rdict["L_FIR_Lsun_uperr"]/10**L_FIR_log10, L_FIR_log10))
-        print("T_dust = {:.1f} -{:.1f} +{:.1f} K ({:.1f} -{:.1f} +{:.1f} K at z = 0)".format(rdict["T_dust"],
-                    rdict["T_dust_lowerr"], rdict["T_dust_uperr"], rdict["T_dust_z0"], rdict["T_dust_z0_lowerr"], rdict["T_dust_z0_uperr"]))
-        print("T_peak = {:.1f} -{:.1f} +{:.1f} K".format(rdict["T_peak_val"], rdict["T_peak_lowerr"], rdict["T_peak_uperr"]))
-        if self.T_lolim:
-            print("T_dust > {:.1f} K (95% confidence),".format(rdict["T_lolim"]))
-            print("\tor T_dust > {:.1f} K at z = 0".format(rdict["T_lolim_z0"]))
-            print("T_peak > {:.1f} K (95% confidence)".format(rdict["T_peak_lolim"]))
-        if self.T_uplim:
-            print("T_dust < {:.1f} K (95% confidence),".format(rdict["T_uplim"]))
-            print("\tor T_dust < {:.1f} K at z = 0".format(rdict["T_uplim_z0"]))
-            print("T_peak < {:.1f} K (95% confidence)".format(rdict["T_peak_uplim"]))
+        if self.fixed_T_dust:
+            print("T_dust = {:.1f} K ({:.1f} K at z = 0)".format(rdict["T_dust"], rdict["T_dust_z0"]))
+            print("T_peak = {:.1f} K".format(rdict["T_peak_val"]))
+        else:
+            print("T_dust = {:.1f} -{:.1f} +{:.1f} K ({:.1f} -{:.1f} +{:.1f} K at z = 0)".format(rdict["T_dust"],
+                        rdict["T_dust_lowerr"], rdict["T_dust_uperr"], rdict["T_dust_z0"], rdict["T_dust_z0_lowerr"], rdict["T_dust_z0_uperr"]))
+            print("T_peak = {:.1f} -{:.1f} +{:.1f} K".format(rdict["T_peak_val"], rdict["T_peak_lowerr"], rdict["T_peak_uperr"]))
+            if self.T_lolim:
+                print("T_dust > {:.1f} K (95% confidence),".format(rdict["T_lolim"]))
+                print("\tor T_dust > {:.1f} K at z = 0".format(rdict["T_lolim_z0"]))
+                print("T_peak > {:.1f} K (95% confidence)".format(rdict["T_peak_lolim"]))
+            if self.T_uplim:
+                print("T_dust < {:.1f} K (95% confidence),".format(rdict["T_uplim"]))
+                print("\tor T_dust < {:.1f} K at z = 0".format(rdict["T_uplim_z0"]))
+                print("T_peak < {:.1f} K (95% confidence)".format(rdict["T_peak_uplim"]))
         if self.fixed_beta:
             print("beta_IR = {:.2g} (fixed)".format(rdict["beta_IR"]))
         else:
@@ -1184,6 +1229,7 @@ class FIR_SED_fit:
             rdict = self.load_rdict(l0)
             
             if rdict is None:
+                assert False
                 continue
             
             M_dust_log10 = math.floor(np.log10(rdict["M_dust"]))
@@ -1257,7 +1303,8 @@ class FIR_SED_fit:
                     "M_dust": r"$M_\mathrm{{ dust }} = {:.{prec}f}_{{ -{:.{prec}f} }}^{{ +{:.{prec}f} }} \cdot 10^{{ {:d} }} \, \mathrm{{ M_\odot }}$".format(rdict["M_dust"]/10**M_dust_log10,
                             rdict["M_dust_lowerr"]/10**M_dust_log10, rdict["M_dust_uperr"]/10**M_dust_log10, M_dust_log10,
                             prec=1 if (rdict["M_dust"]-rdict["M_dust_lowerr"])/10**M_dust_log10 < 1 else 0),
-                    "T_dust": r"$T_\mathrm{{ dust }} = {:.{fmt}}_{{-{:.{fmt}}}}^{{+{:.{fmt}}}} \, \mathrm{{ K }}$".format(T_dust,
+                    "T_dust": r"$T_\mathrm{{ dust }} = {:.1f} \, \mathrm{{ K }}$ (fixed)".format(T_dust) if self.fixed_T_dust else \
+                            r"$T_\mathrm{{ dust }} = {:.{fmt}}_{{-{:.{fmt}}}}^{{+{:.{fmt}}}} \, \mathrm{{ K }}$".format(T_dust,
                             rdict["T_dust_lowerr"], rdict["T_dust_uperr"], fmt=fmt(T_dust, lowerr=rdict["T_dust_lowerr"])),
                     "L_IR": r"$L_\mathrm{{ IR }} = {:.1f}_{{ -{:.1f} }}^{{ +{:.1f} }} \cdot 10^{{ {:d} }} \, \mathrm{{ L_\odot }}$".format(rdict["L_IR_Lsun"]/10**L_IR_log10,
                             rdict["L_IR_Lsun_lowerr"]/10**L_IR_log10, rdict["L_IR_Lsun_uperr"]/10**L_IR_log10, L_IR_log10),
@@ -1286,7 +1333,9 @@ class FIR_SED_fit:
                             columnspacing=0.3*plt.rcParams["legend.columnspacing"], framealpha=leg_framealpha)
             
             # Show which beta_IRs have been used
-            leg.set_title("MN fits of dust emission" + r", fixed $\beta_\mathrm{{ IR }} = {:.2g}$".format(self.fixed_beta) if self.fixed_beta else '',
+            leg.set_title("MN fits of dust emission" + \
+                          (r", fixed $T_\mathrm{{ dust }} = {:.2g} \, \mathrm{{ K }}$".format(self.fixed_T_dust) if self.fixed_T_dust else '') + \
+                            (r", fixed $\beta_\mathrm{{ IR }} = {:.2g}$".format(self.fixed_beta) if self.fixed_beta else ''),
                             prop={"size": "small"})
             
             if plot_data:
@@ -1393,8 +1442,10 @@ class FIR_SED_fit:
             return 1
         if save_results:
             if fixed_T_dust is None:
-                assert self.fixed_T_dust
-                fixed_T_dust = self.fixed_T_dust
+                if self.fixed_T_dust:
+                    fixed_T_dust = self.fixed_T_dust
+                else:
+                    fixed_T_dust = self.fid_T_dust
             if fixed_beta is None:
                 assert self.fixed_beta
                 fixed_beta = self.fixed_beta
@@ -1436,7 +1487,7 @@ class FIR_SED_fit:
         if self.verbose:
             print("\nPlotting ranges on FIR SED of {}...".format(self.obj))
             if save_results:
-                print("Selected fixed T_dust = {:.1f}, β = {:.1f}{}".format(fixed_T_dust, fixed_beta, self.get_l0string(l0)[1]))
+                print("Selected fixed T_dust = {:.1f} K, β = {:.1f}{}".format(fixed_T_dust, fixed_beta, self.get_l0string(l0)[1]))
         
         T_dust_handles = []
 
@@ -1880,23 +1931,28 @@ class FIR_SED_fit:
                                     va=va, ha=ha, color='k', size=ann_size, alpha=0.8, zorder=6)
         ann.set_bbox(dict(boxstyle="Round, pad=0.05", facecolor='w', edgecolor="None", alpha=0.8))
         
+        if self.fixed_T_dust:
+            T_dust_str = r"$T_\mathrm{{ dust }} = {:.2g}$ (fixed)".format(rdict["T_dust"])
+            T_dust_z0_str = r"$T_\mathrm{{ dust }} = {:.2g}$ (fixed)".format(rdict["T_dust_z0"])
+            T_peak_str = r"$T_\mathrm{{ peak }} = {:.2g}$ (fixed)".format(rdict["T_peak_val"])
+        else:
+            prec = max(0, 2-math.floor(np.log10(min(rdict["T_dust_lowerr"], rdict["T_dust_uperr"]))))
+            T_dust_str = r"$T_\mathrm{{ dust }} = {:.{prec}f}_{{ -{:.{prec}f} }}^{{ +{:.{prec}f} }} \, \mathrm{{ K }}".format(rdict["T_dust"],
+                            rdict["T_dust_lowerr"], rdict["T_dust_uperr"], prec=prec) + T_lim_str
+            T_dust_z0_str = r"$T_\mathrm{{ dust }}^{{ z=0 }} = {:.{prec}f}_{{ -{:.{prec}f} }}^{{ +{:.{prec}f} }} \, \mathrm{{ K }}".format(rdict["T_dust_z0"],
+                            rdict["T_dust_z0_lowerr"], rdict["T_dust_z0_uperr"], prec=prec) + T_z0_lim_str
+            T_peak_str = r"$T_\mathrm{{ peak }} = {:.{prec}f}_{{ -{:.{prec}f} }}^{{ +{:.{prec}f} }} \, \mathrm{{ K }}".format(rdict["T_peak_val"],
+                            rdict["T_peak_lowerr"], rdict["T_peak_uperr"], prec=prec) + \
+                                (r" {} {:.{prec}f} \, \mathrm{{ K }}$".format(r'>' if self.T_lolim else r'<', rdict["T_peak"], prec=prec) if self.T_lolim or self.T_uplim else r'$')
+        
         if self.fixed_beta:
             beta_str = r"$\beta_\mathrm{{ IR }} = {:.2g}$ (fixed)".format(rdict["beta_IR"])
         else:
             prec = max(0, 2-math.floor(np.log10(min(rdict["beta_IR_lowerr"], rdict["beta_IR_uperr"]))))
             beta_str = r"$\beta_\mathrm{{ IR }} = {:.{prec}f}_{{ -{:.{prec}f} }}^{{ +{:.{prec}f} }}$".format(rdict["beta_IR"],
                         rdict["beta_IR_lowerr"], rdict["beta_IR_uperr"], prec=prec)
-        
-        prec = max(0, 2-math.floor(np.log10(min(rdict["T_dust_lowerr"], rdict["T_dust_uperr"]))))
 
-        text = '\n' + r"$T_\mathrm{{ dust }} = {:.{prec}f}_{{ -{:.{prec}f} }}^{{ +{:.{prec}f} }} \, \mathrm{{ K }}".format(rdict["T_dust"],
-                    rdict["T_dust_lowerr"], rdict["T_dust_uperr"], prec=prec) + T_lim_str + \
-                '\n' + r"$T_\mathrm{{ dust }}^{{ z=0 }} = {:.{prec}f}_{{ -{:.{prec}f} }}^{{ +{:.{prec}f} }} \, \mathrm{{ K }}".format(rdict["T_dust_z0"],
-                            rdict["T_dust_z0_lowerr"], rdict["T_dust_z0_uperr"], prec=prec) + T_z0_lim_str + \
-                '\n' + r"$T_\mathrm{{ peak }} = {:.{prec}f}_{{ -{:.{prec}f} }}^{{ +{:.{prec}f} }} \, \mathrm{{ K }}".format(rdict["T_peak_val"],
-                            rdict["T_peak_lowerr"], rdict["T_peak_uperr"], prec=prec) + \
-                                (r" {} {:.{prec}f} \, \mathrm{{ K }}$".format(r'>' if self.T_lolim else r'<', rdict["T_peak"], prec=prec) if self.T_lolim or self.T_uplim else r'$') + \
-                '\n' + beta_str
+        text = '\n'.join([T_dust_str, T_dust_z0_str, T_peak_str, beta_str])
         
         if ax_type == "regular":
             ann = axes_ann[1].annotate(text=text, xy=(1, 0), xytext=(-8, 8), xycoords="axes fraction", textcoords="offset points",
@@ -2156,7 +2212,9 @@ class FIR_SED_fit:
         else:
             lstr = '_' + '_'.join(sorted(set([("scl0" if l0 == "self-consistent" else "l0_{:.0f}".format(l0)) for l0 in l0_list if l0]))) if any(l0_list) else ''
         
-        return lstr + ("_beta_{:.1f}".format(self.fixed_beta) if self.fixed_beta else '') + ("_analysis" if analysis and inc_astr else '')
+        return lstr + ("_T_dust_{:.1f}".format(self.fixed_T_dust) if self.fixed_T_dust else '') + \
+                    ("_beta_{:.1f}".format(self.fixed_beta) if self.fixed_beta else '') + \
+                        ("_analysis" if analysis and inc_astr else '')
     
     def load_rdict(self, l0):
         """Function to obtain a saved dictionary of results.
@@ -2180,12 +2238,13 @@ class FIR_SED_fit:
             rdict = self.rdict
         else:
             l0_str, l0_txt = self.get_l0string(l0)
-            rdict_fname = self.mnrfol + "{}_MN_FIR_SED_fit_{}{}.npz".format(self.obj_fn, self.beta_str, l0_str)
+            rdict_fname = self.mnrfol + "{}_MN_FIR_SED_fit{}_{}{}.npz".format(self.obj_fn, self.T_dust_str, self.beta_str, l0_str)
             if os.path.isfile(rdict_fname):
                 rdict = np.load(rdict_fname)
             else:
                 if self.verbose:
-                    print("Warning: MultiNest results with {}{}".format("β = {:.1f}".format(self.fixed_beta) if self.fixed_beta else "varying β", l0_txt),
+                    print("Warning: MultiNest results with {}".format("T_dust = {:.1f} K".format(self.fixed_T_dust) if self.fixed_T_dust else "varying T_dust"),
+                            "and {}{}".format("β = {:.1f}".format(self.fixed_beta) if self.fixed_beta else "varying β", l0_txt),
                             "for {} not found! Filename:\n{}\nContinuing...".format(self.obj, rdict_fname.split('/')[-1]))
                 rdict = None
         

@@ -751,7 +751,6 @@ class FIR_SED_fit:
                 T_dust_samples = flat_samples[:, 1]
                 T_perc = np.percentile(T_dust_samples, percentiles, axis=0)
                 T_dust, rdict["T_dust_lowerr"], rdict["T_dust_uperr"] = T_perc[1], *np.diff(T_perc)
-                beta_IR, rdict["beta_IR_lowerr"], rdict["beta_IR_uperr"] = beta_perc[1], *np.diff(beta_perc)
                 if self.T_lolim:
                     rdict["T_lolim"] = np.percentile(T_dust_samples, 5)
                     T_lim = rdict["T_lolim"]

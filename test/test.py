@@ -20,7 +20,7 @@ if not os.path.exists(pltfol):
     os.makedirs(pltfol)
 
 # Initialise object for the SED fitting routine (adjust setup by specifying e.g. fixed_T_dust=42 or fixed_beta=1.8)
-f = FIR_SED_fit(l0_list=[None], analysis=False, fixed_T_dust=42.0, mnrfol=mnrfol, pformat=".png")
+f = FIR_SED_fit(l0_list=[None], analysis=False, mnrfol=mnrfol, pformat=".png")
 f.set_data(obj="A1689-zD1", z=7.13,
             lambda_emit_vals=[53.04702183893297, 89.45738131653835, 107.22593320533173, 163.04962431996177, 402.5],
             S_nu_vals=[155.10381273644117e-6, 178.9438898238026e-6, 146.97017233573683e-6, 59.69243176098955e-6, 3*4.046324352847791e-6],

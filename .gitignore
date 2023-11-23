@@ -129,7 +129,7 @@ dmypy.json
 .pyre/
 
 # PNG/PDF figures and NPZ archives
-.png
+#.png
 .pdf
 .npz
 .DS_Store

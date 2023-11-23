@@ -120,7 +120,7 @@ for l0 in f.l0_list:
 
 This creates the figure below, in which the various coloured greybody curves indicate that out of the default range of dust temperatures (starting at 20 K, increasing in steps of 10 K up to 110 K; note this can be adjusted in the call to `plot_ranges` with the optional keyword `T_dusts`), only 40 K and 50 K are compatible with the photometric data points for certain dust emissivities (similarly specified by the optional keyword `beta_IRs`, by default a range between 1.5 and 2 with steps of 0.1):
 <br>
-<img src="/test/MN_plots/FIR_SED_ranges_A1689-zD1_analysis.png" width="800">
+<img src="/test/MN_plots/FIR_SED_ranges_A1689-zD1.png" width="800">
 <br>
 
 #### <a name="Executing_the_fitting_routine"></a>Executing the fitting routine
@@ -146,5 +146,5 @@ f.plot_MN_fit(pltfol=pltfol)
 
 This produces the figure shown below:
 <br>
-<img src="/test/MN_plots/FIR_SED_MN_fit_A1689-zD1_analysis.png" width="800">
+<img src="/test/MN_plots/FIR_SED_MN_fit_A1689-zD1.png" width="800">
 <br>

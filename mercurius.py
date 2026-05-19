@@ -52,8 +52,9 @@ wl_star = wl_CII
 nu_star = nu_CII # Hz
 k_nu_star = 8.94 # cm^2/g (other values range from ~5 to ~30)
 
-# Prior range on the dust emissivity, beta
+# Prior range on the dust emissivity, beta, and the wavelength where the optical depth becomes 1, lambda_0 (in micron)
 beta_range = [1, 5]
+l0_range = [8, 300]
 
 # Solar luminosity in erg/s
 L_sun_ergs = 3.828e26 * 1e7
@@ -129,14 +130,14 @@ def FIR_SED_spectrum(theta, z, D_L, l0_dict, lambda_emit=None):
     
     if l0_dict["assumption"] == "fixed":
         optically_thick_lambda_0 = l0_dict["value"]
-    elif l0_dict["assumption"] == "self-consistent":        
+    elif l0_dict["assumption"] == "self-consistent":
         # Dust mass surface density in g/cm^2
         Sigma_dust = 10**logM_dust * M_sun_g / l0_dict["cont_area_cm2"]     
         # Compute the wavelength where the optical depth, τ = κ_nu Σ, becomes 1 (κ in cm^2/g, Σ in g/cm^2)
         # κ_nu is given by κ_nu = κ_nu_star * (nu/nu_star)**beta_IR; κ Σ becomes 1 when (nu/nu_star)**beta_IR = 1/(κ_nu_star Σ)
         nu_0 = nu_star / (Sigma_dust * k_nu_star)**(1.0/beta_IR) # Hz
         optically_thick_lambda_0 = 299792458.0 * 1e6 / nu_0 # micron (nu_0 is in Hz)    
-    elif l0_dict['assumption'] == 'fit':
+    elif l0_dict["assumption"] == "fit":
         optically_thick_lambda_0=theta[3]
     # Compute FIR SED fluxes only at the given (rest-frame) wavelengths
     lambda_emit, S_nu_emit = calc_FIR_SED(z=z, beta_IR=beta_IR, T_dust=T_dust,
@@ -191,12 +192,13 @@ def FIR_SED_spectrum(theta, z, D_L, l0_dict, lambda_emit=None):
     return (lambda_emit, nu_emit, S_nu_emit, S_nu_obs)
 
 class MN_FIR_SED_solver(Solver):
-    def __init__(self, z, D_L, l0_dict, fluxes, flux_errs, uplims, wls,
-                    fixed_T_dust=None, fixed_beta=None, fit_uplims=True, uplim_nsig=None, M_star=np.nan, T_max=150.0, **solv_kwargs):
+    def __init__(self, z, D_L, params, l0_dict, fluxes, flux_errs, uplims, wls,
+                 fixed_T_dust=None, fixed_beta=None, fit_uplims=True, uplim_nsig=None, M_star=np.nan, T_max=150.0, **solv_kwargs):
         print("Initialising MultiNest Solver object...")
         
         self.z = z
         self.D_L = D_L
+        self.params = params
         self.l0_dict = l0_dict
 
         self.T_CMB = T_CMB_obs * (1.0 + self.z) # K
@@ -235,10 +237,8 @@ class MN_FIR_SED_solver(Solver):
             self.cube_range.append(T_dust_range)
         if not self.fixed_beta:
             self.cube_range.append(beta_range)
-            
-        if self.l0_dict['assumption']=='fit':
-            l_0_range=[8,300]
-            self.cube_range.append(l_0_range)
+        if self.l0_dict["assumption"] == "fit":
+            self.cube_range.append(l0_range)
         
         self.cube_range = np.array(self.cube_range)
 
@@ -246,28 +246,21 @@ class MN_FIR_SED_solver(Solver):
         assert hasattr(self, "cube_range")
         # Scale the input unit cube to apply uniform priors across all parameters (except the temperature)
         for di in range(len(cube)):
-            if (self.fixed_T_dust and (not self.fixed_beta) and di == 1) or ((not self.fixed_T_dust) and (not self.fixed_beta) and di == 2):
+            if self.params[di] == "beta":
                 # Use a normal distribution for the dust emissivity (prior belief: beta likely around 1.8)
                 cube[di] = norm.ppf(cube[di], loc=1.8, scale=0.25)
-            elif not self.fixed_T_dust and di == 1:
+            elif self.params[di] == "T_dust":
                 # Use a gamma distribution for the dust temperature (prior belief: unlikely to be near CMB or extremely high temperature)
                 cube[di] = gamma.ppf(cube[di], a=1.5, loc=0, scale=self.cube_range[di, 0]/0.5) + self.cube_range[di, 0]
-            elif self.fixed_T_dust and self.fixed_beta and di == 1:
-                # the 1 index will be lambda_0, and this will be a uniform prior
-                cube[di] = cube[di] * (self.cube_range[di, 1] - self.cube_range[di, 0]) + self.cube_range[di, 0]
             else:
                 cube[di] = cube[di] * (self.cube_range[di, 1] - self.cube_range[di, 0]) + self.cube_range[di, 0]
-                
+        
         return cube
 
     def LogLikelihood(self, cube):
-        if self.l0_dict['assumption']!='fit':
-            theta = (cube[0], self.fixed_T_dust if self.fixed_T_dust else cube[1],
-                        self.fixed_beta if self.fixed_beta else (cube[1] if self.fixed_T_dust else cube[2]))
-        elif self.l0_dict['assumption']=='fit':
-            theta = (cube[0], self.fixed_T_dust if self.fixed_T_dust else cube[1],
-                        self.fixed_beta if self.fixed_beta else (cube[1] if self.fixed_T_dust else cube[2]),
-                     cube[3] if (not self.fixed_beta and not self.fixed_T_dust) else (cube[2] if (self.fixed_beta != self.fixed_T_dust) else cube[1]))
+        theta = [cube[0], self.fixed_T_dust if self.fixed_T_dust else cube[self.params.index("T_dust")], self.fixed_beta if self.fixed_beta else cube[self.params.index("beta")]]
+        if self.l0_dict["assumption"] == "fit":
+            theta.append(cube[self.params.index("l0")])
 
         model_fluxes = FIR_SED_spectrum(theta=theta, z=self.z, D_L=self.D_L, l0_dict=self.l0_dict, lambda_emit=self.wls)[3]
 
@@ -295,7 +288,7 @@ class FIR_SED_fit:
             A list of opacity model classifiers. Entries can be `None` for an optically thin model,
             `"self-consistent"` for a self-consistent opacity model, or a float setting a fixed
             value of `lambda_0`, the wavelength in micron setting the SED's transition point between
-            optically thin and thick.  Can also type 'fit' to fit for lambda_0 explicitly.
+            optically thin and thick.  Can also type "fit" to fit for lambda_0 explicitly.
         analysis : bool
             Controls whether figures are made with slightly more detail (`True`) or  (`False`).
         mnrfol : str
@@ -348,8 +341,8 @@ class FIR_SED_fit:
         self.l0_list = l0_list
         self.analysis = analysis
         self.mnrfol = mnrfol
-        if self.l0_list == ['fit']:
-            self.fit_l0=True
+        if "fit" in self.l0_list:
+            self.fit_l0 = True
 
         if fluxdens_unit:
             assert fluxdens_unit in ["Jy", "mJy", "muJy", "nJy"]
@@ -391,7 +384,7 @@ class FIR_SED_fit:
         self.obj_color = obj_color
 
         if l0_linestyles is None:
-            self.l0_linestyles = {None: '--', "self-consistent": '-', 100.0: '-.', 200.0: ':', 'fit':'-'}
+            self.l0_linestyles = {None: '--', "self-consistent": '-', 100.0: '-.', 200.0: ':', "fit": '-'}
         else:
             self.l0_linestyles = l0_linestyles
         
@@ -612,14 +605,12 @@ class FIR_SED_fit:
         
         for l0 in self.l0_list:
             # Without knowing the source's area, can only fit an optically thin SED or one with fixed lambda_0
-            if (l0 == "self-consistent") and not self.valid_cont_area:
+            if l0 == "self-consistent" and not self.valid_cont_area:
                 print("\nWithout a valid area, cannot run MultiNest fit with a self-consistent lambda_0 for {}...".format(self.obj))
                 continue
             
             l0_dict = {"cont_area_kpc2": self.cont_area}
-            if l0 == "self-consistent":
-                l0_dict["assumption"] = l0
-            elif l0 == 'fit':
+            if l0 in ["self-consistent", "fit"]:
                 l0_dict["assumption"] = l0
             else:
                 l0_dict["assumption"] = "fixed"
@@ -627,20 +618,23 @@ class FIR_SED_fit:
             
             l0_str, l0_txt = self.get_l0string(l0)
 
+            params = ["logM_dust"]
+            if not self.fixed_T_dust:
+                params.append("T_dust")
+            if not self.fixed_beta:
+                params.append("beta")
+            if l0_dict["assumption"] == "fit":
+                params.append("l0")
+
             # Run fit on data
             
-            if l0_dict["assumption"] == 'fit':
-                n_dim = 4 - bool(self.fixed_T_dust) - bool(self.fixed_beta)
-            elif l0_dict["assumption"] != 'fit':
-                n_dim = 3 - bool(self.fixed_T_dust) - bool(self.fixed_beta)
-
             samples_fname = self.mnrfol + "{}_MN_FIR_SED_flat_samples{}_{}{}.npz".format(self.obj_fn, self.T_dust_str, self.beta_str, l0_str)
             if not force_run and skip_redundant_calc and os.path.isfile(samples_fname):
-                print("\nResults already present: skipping {:d}-dimensional MultiNest fit".format(n_dim),
+                print("\nResults already present: skipping {:d}-dimensional MultiNest fit".format(len(params)),
                         "with {}".format("T_dust = {:.1f} K".format(self.fixed_T_dust) if self.fixed_T_dust else "varying T_dust"),
                         "and {}{}".format("β = {:.1f}".format(self.fixed_beta) if self.fixed_beta else "varying β", l0_txt),
                         "for {}...".format(self.obj))
-                if l0_dict["assumption"] == 'fit':
+                if l0_dict["assumption"] == "fit":
                     print('\n Also fitting for l0 explicitly!')
                 continue
             obtain_MN_samples = force_run or not os.path.isfile(samples_fname)
@@ -651,7 +645,7 @@ class FIR_SED_fit:
 
             if obtain_MN_samples:
                 if self.verbose:
-                    print("\nRunning {:d}-dimensional MultiNest fit".format(n_dim),
+                    print("\nRunning {:d}-dimensional MultiNest fit".format(len(params)),
                             "with {}".format("T_dust = {:.1f} K".format(self.fixed_T_dust) if self.fixed_T_dust else "varying T_dust"),
                             "and {}{}".format("β = {:.1f}".format(self.fixed_beta) if self.fixed_beta else "varying β", l0_txt),
                             "for {}...".format(self.obj))
@@ -660,11 +654,11 @@ class FIR_SED_fit:
                 
                 try:
                     os.chdir(omnrfol)
-                    MN_solv = MN_FIR_SED_solver(z=self.z, D_L=self.D_L, l0_dict=l0_dict,
+                    MN_solv = MN_FIR_SED_solver(z=self.z, D_L=self.D_L, params=params, l0_dict=l0_dict,
                                                 fluxes=self.S_nu_vals[~self.cont_excludes], flux_errs=self.S_nu_errs[~self.cont_excludes],
                                                 uplims=self.cont_uplims[~self.cont_excludes], wls=self.lambda_emit_vals[~self.cont_excludes],
                                                 fixed_T_dust=self.fixed_T_dust, fixed_beta=self.fixed_beta, fit_uplims=fit_uplims, uplim_nsig=self.uplim_nsig,
-                                                n_dims=n_dim, outputfiles_basename="MN", n_live_points=n_live_points,
+                                                n_dims=len(params), outputfiles_basename="MN", n_live_points=n_live_points,
                                                 evidence_tolerance=evidence_tolerance, sampling_efficiency=sampling_efficiency, max_iter=max_iter,
                                                 resume=False, verbose=mnverbose and self.verbose)
                 except Exception as e:
@@ -712,7 +706,7 @@ class FIR_SED_fit:
             
             if not self.fixed_beta:
                 # Calculate percentiles of dust emissivity, masking any non-finite values
-                beta_samples = flat_samples[:, 2]
+                beta_samples = flat_samples[:, params.index("beta")]
                 beta_perc = np.percentile(beta_samples[np.isfinite(beta_samples)], percentiles, axis=0)
                 beta_IR, rdict["beta_IR_lowerr"], rdict["beta_IR_uperr"] = beta_perc[1], *np.diff(beta_perc)
             rdict["beta_IR"] = beta_IR
@@ -720,8 +714,7 @@ class FIR_SED_fit:
             M_dust_perc = np.percentile(10**logM_dust_samples, percentiles, axis=0)
             rdict["M_dust"], rdict["M_dust_lowerr"], rdict["M_dust_uperr"] = M_dust_perc[1], *np.diff(M_dust_perc)
             
-            if self.valid_cont_area and l0_dict["assumption"]=='self-consistent':
-                
+            if self.valid_cont_area and l0_dict["assumption"] == "self-consistent":
                 # Dust mass surface density in M_sun/pc^2 (area in kpc^2 converted to pc^2 by multiplying by (10^3)^2)
                 Sigma_dust_samples = 10**logM_dust_samples / (self.cont_area * 1e6)
                 Sigma_dust_perc = np.percentile(Sigma_dust_samples, percentiles, axis=0)
@@ -740,8 +733,8 @@ class FIR_SED_fit:
                 lambda_0_perc = np.percentile(lambda_0_samples, percentiles, axis=0)
                 rdict["lambda_0"], rdict["lambda_0_lowerr"], rdict["lambda_0_uperr"] = lambda_0_perc[1], *np.diff(lambda_0_perc)
                # del nu_0_samples
-            elif l0_dict["assumption"]=='fit':
-                lambda_0_samples=flat_samples[:, 3]
+            elif l0_dict["assumption"] == "fit":
+                lambda_0_samples = flat_samples[:, params.index("l0")]
                 lambda_0_perc = np.percentile(lambda_0_samples, percentiles, axis=0)
                 rdict["lambda_0"], rdict["lambda_0_lowerr"], rdict["lambda_0_uperr"] = lambda_0_perc[1], *np.diff(lambda_0_perc)
 
@@ -777,7 +770,7 @@ class FIR_SED_fit:
                     rdict["T_uplim"] = T_lim
             else:
                 # Calculate percentiles of dust emissivity, masking any non-finite values
-                T_dust_samples = flat_samples[:, 1]
+                T_dust_samples = flat_samples[:, params.index("T_dust")]
                 T_perc = np.percentile(T_dust_samples, percentiles, axis=0)
                 T_dust, rdict["T_dust_lowerr"], rdict["T_dust_uperr"] = T_perc[1], *np.diff(T_perc)
                 if self.T_lolim:
@@ -805,7 +798,7 @@ class FIR_SED_fit:
                 data.append(T_dust_samples)
             if not self.fixed_beta:
                 data.append(beta_samples)
-            if l0_dict['assumption']=='fit':
+            if l0_dict["assumption"] == "fit":
                 data.append(lambda_0_samples)
             H, edges = np.histogramdd(data, bins=50, range=[np.percentile(d, [5, 95]) for d in data])
             argmax = np.unravel_index(gaussian_filter(H, 3).argmax(), H.shape)
@@ -916,14 +909,8 @@ class FIR_SED_fit:
                 
                 del T_dust_samples, T_peak_samples
             
-            if l0 == "self-consistent":
-                extra_dim += 1
-                names.insert(1, "lambda_0")
-                data.insert(1, lambda_0_samples)
-                del lambda_0_samples
-                bins.insert(1, n_bins)
-                labels.insert(1, r"$\lambda_0$")
-            if l0 == "fit":
+            if l0 in ["self-consistent", "fit"]:
+                if l0 == "self-consistent": extra_dim += 1
                 names.insert(1, "lambda_0")
                 data.insert(1, lambda_0_samples)
                 del lambda_0_samples
@@ -938,7 +925,7 @@ class FIR_SED_fit:
                 labels.append(r"$\beta_\mathrm{IR}$")
             
             # Deselect non-finite data for histograms
-            select_data = np.product([np.isfinite(d) for d in data], axis=0).astype(bool)
+            select_data = np.prod([np.isfinite(d) for d in data], axis=0).astype(bool)
             if not np.any(select_data):
                 print("Warning: MultiNest fit of {} resulted in non-finite parameters...".format(self.obj))
                 return np.ones((2, 0)) if return_samples else 1
@@ -972,7 +959,7 @@ class FIR_SED_fit:
                 text += '\n' + r"$z = {:.6g}$, $T_\mathrm{{ CMB }} = {:.2f} \, \mathrm{{ K }}$".format(self.z, T_CMB_obs*(1.0+self.z))
                 if self.analysis:
                     if not np.isnan(self.obj_M):
-                        text += '\n' + r"$M_* = {:.1f}_{{-{:.1f}}}^{{+{:.1f}}} \cdot 10^{{{:d}}} \, \mathrm{{M_\odot}}$".format(self.obj_M/10**math.floor(np.log10(self.obj_M)),
+                        text += '\n' + r"$M_* = {:.1f}_{{-{:.1f}}}^{{+{:.1f}}} \times 10^{{{:d}}} \, \mathrm{{M_\odot}}$".format(self.obj_M/10**math.floor(np.log10(self.obj_M)),
                                     self.obj_M_lowerr/10**math.floor(np.log10(self.obj_M)), self.obj_M_uperr/10**math.floor(np.log10(self.obj_M)), math.floor(np.log10(self.obj_M)))
                     if not np.isnan(self.SFR_UV):
                         text += r", $\mathrm{{ SFR_{{UV}} }} = {:.0f}{}".format(self.SFR_UV, r'' if np.isnan(self.SFR_UV_err) else r" \pm {:.0f}".format(self.SFR_UV_err)) + \
@@ -981,10 +968,10 @@ class FIR_SED_fit:
                 cfig.suptitle(text, size=size)
 
                 # Extract the axes
-                axes_c = np.array(cfig.axes).reshape((n_dim+extra_dim, n_dim+extra_dim))
+                axes_c = np.array(cfig.axes).reshape((len(params)+extra_dim, len(params)+extra_dim))
 
                 # Loop over the histograms
-                for ri in range(n_dim+extra_dim):
+                for ri in range(len(params)+extra_dim):
                     for ci in range(ri):
                         axes_c[ri, ci].vlines(np.percentile(data[ci], percentiles), ymin=0, ymax=1,
                                                 transform=axes_c[ri, ci].get_xaxis_transform(), linestyles=['--', '-', '--'], color="grey")
@@ -1339,13 +1326,13 @@ class FIR_SED_fit:
                 
                 fmt = lambda val, lowerr: "0f" if val > 2 and float("{:.0f}".format(lowerr)) and float("{:.0f}".format(val))-float("{:.0f}".format(lowerr)) > 0 else "{}f".format(max(0, 1-int(np.log10(lowerr))))
                 leg_label_dict = {
-                    "M_dust": r"$M_\mathrm{{ dust }} = {:.{prec}f}_{{ -{:.{prec}f} }}^{{ +{:.{prec}f} }} \cdot 10^{{ {:d} }} \, \mathrm{{ M_\odot }}$".format(rdict["M_dust"]/10**M_dust_log10,
+                    "M_dust": r"$M_\mathrm{{ dust }} = {:.{prec}f}_{{ -{:.{prec}f} }}^{{ +{:.{prec}f} }} \times 10^{{ {:d} }} \, \mathrm{{ M_\odot }}$".format(rdict["M_dust"]/10**M_dust_log10,
                             rdict["M_dust_lowerr"]/10**M_dust_log10, rdict["M_dust_uperr"]/10**M_dust_log10, M_dust_log10,
                             prec=1 if (rdict["M_dust"]-rdict["M_dust_lowerr"])/10**M_dust_log10 < 1 else 0),
                     "T_dust": r"$T_\mathrm{{ dust }} = {:.1f} \, \mathrm{{ K }}$ (fixed)".format(T_dust) if self.fixed_T_dust else \
                             r"$T_\mathrm{{ dust }} = {:.{fmt}}_{{-{:.{fmt}}}}^{{+{:.{fmt}}}} \, \mathrm{{ K }}$".format(T_dust,
                             rdict["T_dust_lowerr"], rdict["T_dust_uperr"], fmt=fmt(T_dust, lowerr=rdict["T_dust_lowerr"])),
-                    "L_IR": r"$L_\mathrm{{ IR }} = {:.1f}_{{ -{:.1f} }}^{{ +{:.1f} }} \cdot 10^{{ {:d} }} \, \mathrm{{ L_\odot }}$".format(rdict["L_IR_Lsun"]/10**L_IR_log10,
+                    "L_IR": r"$L_\mathrm{{ IR }} = {:.1f}_{{ -{:.1f} }}^{{ +{:.1f} }} \times 10^{{ {:d} }} \, \mathrm{{ L_\odot }}$".format(rdict["L_IR_Lsun"]/10**L_IR_log10,
                             rdict["L_IR_Lsun_lowerr"]/10**L_IR_log10, rdict["L_IR_Lsun_uperr"]/10**L_IR_log10, L_IR_log10),
                     "SFR_IR": r"$\mathrm{{ SFR_{{IR}} }} = {:.0f}_{{ -{:.0f} }}^{{ +{:.0f} }} \, \mathrm{{ M_\odot \, yr^{{-1}} }}$".format(rdict["SFR_IR"],
                             *rdict["SFR_IR_err"])}
@@ -1709,11 +1696,11 @@ class FIR_SED_fit:
                     rdict["SFR_err"] = np.sqrt(np.tile(self.SFR_UV_err, 2)**2 + (rdict["SFR_IR"]/3.0 if rdict["L_IR_uplim"] else rdict["SFR_IR_err"])**2)
 
                     if uplim:
-                        IR_ann_list = [r"$L_\mathrm{{ IR }} \lesssim {:.1f} \cdot 10^{{ {:d} }} \, \mathrm{{ L_\odot }}$".format(rdict["L_IR_Lsun"]/10**L_IR_log10,
+                        IR_ann_list = [r"$L_\mathrm{{ IR }} \lesssim {:.1f} \times 10^{{ {:d} }} \, \mathrm{{ L_\odot }}$".format(rdict["L_IR_Lsun"]/10**L_IR_log10,
                                                     L_IR_log10),
                                         r"$\mathrm{{ SFR_{{IR}} }} \lesssim {:.0f} \, \mathrm{{ M_\odot \, yr^{{-1}} }}$".format(rdict["SFR_IR"])]
                     else:
-                        IR_ann_list = [r"$L_\mathrm{{ IR }} \simeq {:.1f}_{{ -{:.1f} }}^{{ +{:.1f} }} \cdot 10^{{ {:d} }} \, \mathrm{{ L_\odot }}$".format(rdict["L_IR_Lsun"]/10**L_IR_log10,
+                        IR_ann_list = [r"$L_\mathrm{{ IR }} \simeq {:.1f}_{{ -{:.1f} }}^{{ +{:.1f} }} \times 10^{{ {:d} }} \, \mathrm{{ L_\odot }}$".format(rdict["L_IR_Lsun"]/10**L_IR_log10,
                                                 rdict["L_IR_Lsun_lowerr"]/10**L_IR_log10, rdict["L_IR_Lsun_uperr"]/10**L_IR_log10, L_IR_log10),
                                         r"$\mathrm{{ SFR_{{IR}} }} \simeq {:.0f}_{{ -{:.0f} }}^{{ +{:.0f} }} \, \mathrm{{ M_\odot \, yr^{{-1}} }}$".format(rdict["SFR_IR"],
                                                 *rdict["SFR_IR_err"])]
@@ -1780,7 +1767,7 @@ class FIR_SED_fit:
                 L_FIR_log10 = math.floor(np.log10(np.min([L_FIR_Lsun_betas[0], L_FIR_Lsun_betas[-1]])))
                 text = r"$L_\mathrm{{ IR }} {} ( {:.1f}$-${:.1f} )".format('=' if np.sum(self.cont_det) > 0 else r"\leq",
                         *np.sort([L_IR_Lsun_betas[0], L_IR_Lsun_betas[-1]])/10**L_IR_log10) + \
-                            r"\cdot 10^{{ {:d} }} \, \mathrm{{ L_\odot }}$".format(L_IR_log10)
+                            r"\times 10^{{ {:d} }} \, \mathrm{{ L_\odot }}$".format(L_IR_log10)
 
                 if not all_compatible_betas:
                     if low_beta_idx == high_beta_idx:
@@ -1879,7 +1866,7 @@ class FIR_SED_fit:
             text += '\n' + r"$M_* = {:.1f}".format(self.obj_M/10**math.floor(np.log10(self.obj_M)))
             if not np.isnan(self.obj_M_lowerr) and not np.isnan(self.obj_M_uperr):
                 text += r"_{{-{:.1f}}}^{{+{:.1f}}}".format(self.obj_M_lowerr/10**math.floor(np.log10(self.obj_M)), self.obj_M_uperr/10**math.floor(np.log10(self.obj_M)))
-            text += r" \cdot 10^{{{:d}}} \, \mathrm{{M_\odot}}$".format(math.floor(np.log10(self.obj_M)))
+            text += r" \times 10^{{{:d}}} \, \mathrm{{M_\odot}}$".format(math.floor(np.log10(self.obj_M)))
         if not np.isnan(self.SFR_UV):
             text += '\n' + r"$\mathrm{{ SFR_{{UV}} }} = {:.0f}{}".format(self.SFR_UV, r'' if np.isnan(self.SFR_UV_err) else r" \pm {:.0f}".format(self.SFR_UV_err)) + \
                     r" \, \mathrm{{M_\odot yr^{{-1}}}}$"
@@ -1910,11 +1897,11 @@ class FIR_SED_fit:
         L_IR_log10 = math.floor(np.log10(rdict["L_IR_Lsun"]))
         L_FIR_log10 = math.floor(np.log10(rdict["L_FIR_Lsun"]))
         
-        if self.valid_cont_area:
+        if self.fit_l0:
+            lambda_0_sign = '='
+        elif self.valid_cont_area:
             Sigma_sign = '>' if self.cont_area_uplim else '='
             lambda_0_sign = '<' if self.cont_area_uplim else '='
-        if self.fit_l0==True:
-            lambda_0_sign = '='
         
         if self.T_lolim:
             T_lim_str = r" > {:.0f} \, \mathrm{{ K }}$".format(rdict["T_lolim"])
@@ -1932,28 +1919,23 @@ class FIR_SED_fit:
         prec_SFR = max(0, 2-math.floor(np.log10(np.min(rdict["SFR_IR_err"])))) if np.min(rdict["SFR_IR_err"]) < 1 else 0
         prec_M = max(1, 2-math.floor(np.log10(min(rdict["M_dust_lowerr"]/10**M_dust_log10, rdict["M_dust_uperr"]/10**M_dust_log10))))
         
-        text = r"$L_\mathrm{{ IR }} = {:.{prec}f}_{{ -{:.{prec}f} }}^{{ +{:.{prec}f} }} \cdot 10^{{ {:d} }} \, \mathrm{{ L_\odot }}$".format(rdict["L_IR_Lsun"]/10**L_IR_log10,
+        text = r"$L_\mathrm{{ IR }} = {:.{prec}f}_{{ -{:.{prec}f} }}^{{ +{:.{prec}f} }} \times 10^{{ {:d} }} \, \mathrm{{ L_\odot }}$".format(rdict["L_IR_Lsun"]/10**L_IR_log10,
                     rdict["L_IR_Lsun_lowerr"]/10**L_IR_log10, rdict["L_IR_Lsun_uperr"]/10**L_IR_log10, L_IR_log10, prec=prec_IR) + \
-                '\n' + r"$L_\mathrm{{ FIR }} = {:.{prec}f}_{{ -{:.{prec}f} }}^{{ +{:.{prec}f} }} \cdot 10^{{ {:d} }} \, \mathrm{{ L_\odot }}$".format(rdict["L_FIR_Lsun"]/10**L_FIR_log10,
+                '\n' + r"$L_\mathrm{{ FIR }} = {:.{prec}f}_{{ -{:.{prec}f} }}^{{ +{:.{prec}f} }} \times 10^{{ {:d} }} \, \mathrm{{ L_\odot }}$".format(rdict["L_FIR_Lsun"]/10**L_FIR_log10,
                     rdict["L_FIR_Lsun_lowerr"]/10**L_FIR_log10, rdict["L_FIR_Lsun_uperr"]/10**L_FIR_log10, L_FIR_log10, prec=prec_FIR) + \
                 '\n' + r"$\mathrm{{ SFR_{{IR}} }} = {:.{prec}f}_{{ -{:.{prec}f} }}^{{ +{:.{prec}f} }} \, \mathrm{{ M_\odot \, yr^{{-1}} }}$".format(rdict["SFR_IR"],
                     *rdict["SFR_IR_err"], prec=prec_SFR) + \
-                "\n\n" + r"$M_\mathrm{{ dust }} = {:.{prec}f}_{{ -{:.{prec}f} }}^{{ +{:.{prec}f} }} \cdot 10^{{ {:d} }} \, \mathrm{{ M_\odot }}$".format(rdict["M_dust"]/10**M_dust_log10,
+                "\n\n" + r"$M_\mathrm{{ dust }} = {:.{prec}f}_{{ -{:.{prec}f} }}^{{ +{:.{prec}f} }} \times 10^{{ {:d} }} \, \mathrm{{ M_\odot }}$".format(rdict["M_dust"]/10**M_dust_log10,
                     rdict["M_dust_lowerr"]/10**M_dust_log10, rdict["M_dust_uperr"]/10**M_dust_log10, M_dust_log10, prec=prec_M)
-        if self.valid_cont_area or self.fit_l0 == True:
-            '''
-                prec_Sig = max(0, 2-math.floor(np.log10(min(rdict["Sigma_dust_lowerr"], rdict["Sigma_dust_uperr"]))))
-                prec_l0 = max(0, 2-math.floor(np.log10(min(rdict["lambda_0_lowerr"], rdict["lambda_0_uperr"]))))
-
-                text += '\n' + r"$\Sigma_\mathrm{{ dust }} {} {:.{prec}f}_{{ -{:.{prec}f} }}^{{ +{:.{prec}f} }} \, \mathrm{{ M_\odot \, pc^{{-2}} }}$".format(Sigma_sign,
-                        rdict["Sigma_dust"], rdict["Sigma_dust_lowerr"], rdict["Sigma_dust_uperr"], prec=prec_Sig) + \
-                    '\n' + r"$\lambda_0 {} {:.{prec}f}_{{ -{:.{prec}f} }}^{{ +{:.{prec}f} }} \, \mathrm{{ \mu m }}$".format(lambda_0_sign, rdict["lambda_0"],
-                        rdict["lambda_0_lowerr"], rdict["lambda_0_uperr"], prec=prec_l0)
-            '''
+        if self.fit_l0:
             prec_l0 = max(0, 2-math.floor(np.log10(min(rdict["lambda_0_lowerr"], rdict["lambda_0_uperr"]))))
 
             text += '\n' + r"$\lambda_0 {} {:.{prec}f}_{{ -{:.{prec}f} }}^{{ +{:.{prec}f} }} \, \mathrm{{ \mu m }}$".format(lambda_0_sign, rdict["lambda_0"],
                     rdict["lambda_0_lowerr"], rdict["lambda_0_uperr"], prec=prec_l0)
+        elif self.valid_cont_area:
+            prec_Sig = max(0, 2-math.floor(np.log10(min(rdict["Sigma_dust_lowerr"], rdict["Sigma_dust_uperr"]))))
+            text += '\n' + r"$\Sigma_\mathrm{{ dust }} {} {:.{prec}f}_{{ -{:.{prec}f} }}^{{ +{:.{prec}f} }} \, \mathrm{{ M_\odot \, pc^{{-2}} }}$".format(Sigma_sign,
+                    rdict["Sigma_dust"], rdict["Sigma_dust_lowerr"], rdict["Sigma_dust_uperr"], prec=prec_Sig)
         
         if not np.isnan(rdict["dust_frac"]):
             prec_fr = max(0, 2-math.floor(np.log10(min(rdict["dust_frac_lowerr"], rdict["dust_frac_uperr"]))))
@@ -2261,7 +2243,7 @@ class FIR_SED_fit:
         if single_plot:
             lstr = ''
         else:
-            lstr = '_' + '_'.join(sorted(set([("scl0" if (l0 == "self-consistent" or l0=='fit') else "l0_{:.0f}".format(l0)) for l0 in l0_list if l0]))) if any(l0_list) else ''
+            lstr = '_' + '_'.join(sorted(set([("scl0" if (l0 == "self-consistent" or l0 == "fit") else "l0_{:.0f}".format(l0)) for l0 in l0_list if l0]))) if any(l0_list) else ''
         
         return lstr + ("_T_dust_{:.1f}".format(self.fixed_T_dust) if self.fixed_T_dust else '') + \
                     ("_beta_{:.1f}".format(self.fixed_beta) if self.fixed_beta else '') + \

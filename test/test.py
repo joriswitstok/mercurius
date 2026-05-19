@@ -31,5 +31,5 @@ f.set_data(obj="A1689-zD1", z=7.13,
 for l0 in f.l0_list:
     f.plot_ranges(l0=l0, save_results=False, pltfol=pltfol)
 
-f.fit_data(pltfol=pltfol, fit_uplims=True, n_live_points=2000, force_run=False, mnverbose=False)
+f.fit_data(pltfol=pltfol, fit_uplims=True, n_live_points=400, force_run=False, mnverbose=False)
 f.plot_MN_fit(pltfol=pltfol, up_yspace_mult=8)

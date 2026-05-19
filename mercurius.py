@@ -4,6 +4,8 @@
 Script for running MultiNest fits on dust FIR SEDs.
 
 Joris Witstok, 17 November 2021
+
+Updated by: Leo Y. Wang, May 18 2026
 """
 
 import os, sys, shutil

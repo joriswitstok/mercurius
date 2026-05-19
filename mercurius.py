@@ -31,9 +31,9 @@ from matplotlib import pyplot as plt
 import seaborn as sns
 sns.set_style("ticks")
 
-from aux.star_formation import SFR_L
-from aux.infrared_luminosity import T_CMB_obs, inv_CMB_heating, CMB_correction, Planck_func, calc_FIR_SED
-from aux.legend_handler import BTuple, BTupleHandler
+from auxiliary.star_formation import SFR_L
+from auxiliary.infrared_luminosity import T_CMB_obs, inv_CMB_heating, CMB_correction, Planck_func, calc_FIR_SED
+from auxiliary.legend_handler import BTuple, BTupleHandler
 
 # Import astropy cosmology, given H0 and Omega_matter
 from astropy.cosmology import FLRW, FlatLambdaCDM
@@ -551,7 +551,7 @@ class FIR_SED_fit:
             including the (F)IR luminosities. Default is `None`, which will default
             to a linearly spaced array of 10,000 points ranging between 4 and 1100
             micron in the function `calc_FIR_SED` (located in
-            `mercurius/aux/infrared_luminosity.py`).
+            `mercurius/auxiliary/infrared_luminosity.py`).
         n_live_points : int, optional
             Number of live points used in the MultiNest run. See the `pymultinest`
             documentation for details.
@@ -1345,7 +1345,7 @@ class FIR_SED_fit:
                 self.save_fig(pltfol=pltfol, ptype="MN_fit", l0_list=l0_list, obj_str=obj_str, single_plot=single_plot)
     
     def plot_ranges(self, l0, T_dusts=T_dusts_global, beta_IRs=beta_IRs_global, fixed_T_dust=None, fixed_beta=None, lambda_emit=None,
-                    save_results=True, fig=None, ax=None, pltfol=None, obj_str=None,
+                    save_results=True, add_systematic_unc=False, fig=None, ax=None, pltfol=None, obj_str=None,
                     annotate_title=True, annotate_results=True, show_legend=True,
                     plot_data=True, bot_axis="wl_emit", add_top_axis="wl_obs", set_xrange=True, set_xlabel="both", set_ylabel=True,
                     low_yspace_mult=0.05, up_yspace_mult=4, rowi=0, coli=0):
@@ -1383,10 +1383,12 @@ class FIR_SED_fit:
             including the (F)IR luminosities. Default is `None`, which will default
             to a linearly spaced array of 10,000 points ranging between 4 and 1100
             micron in the function `calc_FIR_SED` (located in
-            `mercurius/aux/infrared_luminosity.py`).
+            `mercurius/auxiliary/infrared_luminosity.py`).
         save_results : bool, optional
             Save results for a greybody spectrum with dust temperature `fixed_T_dust` and dust
             emissivity `fixed_beta`? Default: `True`.
+        add_systematic_unc : bool, optional
+            Add a 0.4 dex systematic uncertainty to the resulting IR luminosities? Default: `False`.
         fig : {`None`, instance of `matplotlib.figure.Figure`}, optional
             Figure instance to use for plotting. If `fig` and `ax` are not given, `plt.subplots()`
             will be used to create them. Otherwise, if `fig` is given but `ax` is not,
@@ -1591,7 +1593,7 @@ class FIR_SED_fit:
                 # S_(ν, obs) = S_(ν, emit) * (1+z) as ν itself scales as ν_obs = ν_emit / (1+z) while the flux (S_ν dν) is invariant
                 S_nu_emit_lowerr = S_nu_emit * normalisation_lowerr / (1.0+self.z) / self.fd_conv # Jy
                 S_nu_emit_uperr = S_nu_emit * normalisation_uperr / (1.0+self.z) / self.fd_conv # Jy
-                S_nu_emit *= normalisation / (1.0+self.z) / self.fd_conv # Jy
+                S_nu_emit *= normalisation / (1.0+self.z) / self.fd_conv # J
                 S_nu_obs = S_nu_emit_CMB_att * normalisation # (m/μ)Jy (depending on self.fd_conv)
 
                 if np.min(S_nu_obs[(lambda_emit >= max(20, self.l_min)) * (lambda_emit <= min(1e3, self.l_max))]) < self.F_nu_obs_min:
@@ -1618,15 +1620,16 @@ class FIR_SED_fit:
                 L_FIR_Lsun_lowerr = F_FIR_lowerr * 4.0 * np.pi * self.D_L**2 / L_sun_ergs # L_sun
                 L_FIR_Lsun_uperr = F_FIR_uperr * 4.0 * np.pi * self.D_L**2 / L_sun_ergs # L_sun
 
-                # Add a 0.4 dex systematic uncertainty
-                if uplim:
-                    L_IR_Lsun *= np.sqrt(1 + (10**0.4)**2)
-                    L_FIR_Lsun *= np.sqrt(1 + (10**0.4)**2)
-                else:
-                    L_IR_Lsun_lowerr *= np.sqrt(1 + (10**0.4)**2)
-                    L_IR_Lsun_uperr *= np.sqrt(1 + (10**0.4)**2)
-                    L_FIR_Lsun_lowerr *= np.sqrt(1 + (10**0.4)**2)
-                    L_FIR_Lsun_uperr *= np.sqrt(1 + (10**0.4)**2)
+                if add_systematic_unc:
+                    # Add a 0.4 dex systematic uncertainty
+                    if uplim:
+                        L_IR_Lsun *= np.sqrt(1 + (10**0.4)**2)
+                        L_FIR_Lsun *= np.sqrt(1 + (10**0.4)**2)
+                    else:
+                        L_IR_Lsun_lowerr *= np.sqrt(1 + (10**0.4)**2)
+                        L_IR_Lsun_uperr *= np.sqrt(1 + (10**0.4)**2)
+                        L_FIR_Lsun_lowerr *= np.sqrt(1 + (10**0.4)**2)
+                        L_FIR_Lsun_uperr *= np.sqrt(1 + (10**0.4)**2)
 
                 if save_results and np.abs(T_dust - fixed_T_dust) < 1e-8 and np.abs(beta_IR - fixed_beta) < 1e-8:
                     fixed_vals_cb = compatible_beta

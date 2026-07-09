@@ -343,6 +343,8 @@ class FIR_SED_fit:
         self.mnrfol = mnrfol
         if "fit" in self.l0_list:
             self.fit_l0 = True
+        else:
+            self.fit_l0 = False
 
         if fluxdens_unit:
             assert fluxdens_unit in ["Jy", "mJy", "muJy", "nJy"]
